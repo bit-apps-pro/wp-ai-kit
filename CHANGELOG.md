@@ -1,10 +1,34 @@
 # Changelog
 
-All notable changes to this package. Format: Keep a Changelog; versioning: SemVer.
+All notable changes to this package. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the package uses
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html): within a major version, changes are additive only.
 
-## [Unreleased]
+## [1.0.1]- 2026-10-18
 
 ### Added
+
+- `services.brand` takes `background`, `color_dark` and `background_dark` beside `color`, so the consent
+  screen can follow the plugin's colours in light and dark mode. Hex values only; a missing key falls back to
+  the new `ConsentScreen::DEFAULT_PALETTE` (`color_dark` to the plugin's `color` first).
+
+### Changed
+
+- The consent screen's primary button text is black or white, whichever reads better on the accent, and the
+  access-level radios and checkbox use the accent.
+
+### Fixed
+
+- Client metadata documents are accepted when `none` is among `token_endpoint_auth_methods_supported`,
+  whatever the legacy `token_endpoint_auth_method` says. ChatGPT publishes `["none", "private_key_jwt"]`
+  with `private_key_jwt` as its preference and was refused as an unknown client.
+
+## [1.0.0] - 2026-10-18
+
+First release.
+
+### Added
+
 - `PluginContext` `features` (`FEATURE_MCP`, `FEATURE_ASSISTANT`, both on by default): a plugin that does not
   ship one leaves it out entirely. Without MCP the kit registers no hooks at all (no REST routes, OAuth,
   `.well-known`, consent, Abilities or adapter hooks), and settings cannot switch a left-out feature on.
@@ -53,6 +77,7 @@ All notable changes to this package. Format: Keep a Changelog; versioning: SemVe
 - Prefix-safety linter (`bin/check-prefix-safety.php`) and CI (PHP 8.0 / 8.3 / 8.4).
 
 ### Changed
+
 - MCP and OAuth REST routes register without building the server: the transport, tool registry, providers and
   OAuth stores are created only when a request reaches those routes (previously on every REST request while
   MCP was on). The `rest_post_dispatch` challenge hook builds the transport only for the MCP endpoint's 401s.
@@ -63,14 +88,10 @@ All notable changes to this package. Format: Keep a Changelog; versioning: SemVe
   an empty autoloaded placeholder on first read. The MCP hooks read the settings on every REST request, which
   cost one database query each while the options were not autoloaded or did not exist.
 
-### Changed
-- The consent screen takes `background`, `color_dark` and `background_dark` from `services.brand` beside
-  `color`, falling back to the new `ConsentScreen::DEFAULT_PALETTE`. The primary button's text is black or
-  white, whichever reads better on the accent, and the access-level radios and checkbox use the accent.
-
 ### Fixed
-- Client metadata documents are accepted when `none` is among `token_endpoint_auth_methods_supported`,
-  whatever the legacy `token_endpoint_auth_method` says. ChatGPT publishes `["none", "private_key_jwt"]`
-  with `private_key_jwt` as its preference and was refused as an unknown client.
+
 - `PluginContext::create()` threw an unqualified `InvalidArgumentException` (a fatal) for non-string
   `instructions`.
+
+[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/bit-apps-pro/wp-ai-kit/releases/tag/v1.0.0

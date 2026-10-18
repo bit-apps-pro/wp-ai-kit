@@ -1,8 +1,9 @@
 # Upgrading
 
-Breaking changes between versions, newest first. During `0.x` a minor release may
-break; the entry says what to change in a consuming plugin.
+Breaking changes between versions, newest first, with what to change in a
+consuming plugin. Within a major version releases are additive, so this file
+only gains an entry when the major version changes.
 
-## Unreleased
+## 1.0.0
 
-Initial development. No released version to upgrade from.
+First release. No earlier version to upgrade from.
