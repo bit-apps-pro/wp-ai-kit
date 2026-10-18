@@ -161,6 +161,34 @@ final class OAuthServerTest extends TestCase
         self::assertFalse(ClientRegistry::isMetadataDocumentId('https://claude.ai/'), 'a metadata document URL needs a path');
     }
 
+    public function testChatGptsDocumentIsAcceptedThroughItsSupportedMethods(): void
+    {
+        // ChatGPT's published document (https://chatgpt.com/oauth/client.json): it prefers
+        // private_key_jwt but supports none, which is what this server offers.
+        $id = 'https://chatgpt.com/oauth/client.json';
+        \AiKitTestState::$httpResponses[$id] = ['response' => ['code' => 200], 'body' => json_encode([
+            'client_id'                             => $id,
+            'client_name'                           => 'ChatGPT',
+            'redirect_uris'                         => ['https://chatgpt.com/connector_platform_oauth_redirect'],
+            'token_endpoint_auth_method'            => 'private_key_jwt',
+            'token_endpoint_auth_methods_supported' => ['none', 'private_key_jwt'],
+            'jwks_uri'                              => 'https://chatgpt.com/oauth/jwks.json',
+        ])];
+
+        $client = $this->server()->clients()->find($id);
+        self::assertNotNull($client);
+        self::assertSame('ChatGPT', $client['client_name']);
+        self::assertSame('chatgpt.com', $client['host']);
+
+        $jwtOnly = 'https://app.example/jwt-client.json';
+        \AiKitTestState::$httpResponses[$jwtOnly] = ['response' => ['code' => 200], 'body' => json_encode([
+            'client_id'                             => $jwtOnly,
+            'redirect_uris'                         => [self::REDIRECT],
+            'token_endpoint_auth_methods_supported' => ['private_key_jwt'],
+        ])];
+        self::assertNull($this->server()->clients()->find($jwtOnly), 'a client that cannot use none is refused');
+    }
+
     public function testAuthorizeRequiresPkceS256(): void
     {
         $client = $this->register();

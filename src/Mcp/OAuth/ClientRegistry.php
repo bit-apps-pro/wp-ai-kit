@@ -180,9 +180,12 @@ final class ClientRegistry
             return null;
         }
 
-        // A public client: a document claiming a secret-based method is not one we can serve.
-        $method = $document['token_endpoint_auth_method'] ?? 'none';
-        if ('none' !== $method || isset($document['client_secret'])) {
+        // Only public clients (PKCE, no client authentication) are served, so `none` must be
+        // among the methods the client can use. The list (token_endpoint_auth_methods_supported)
+        // wins over the older single preference: ChatGPT publishes ["none", "private_key_jwt"]
+        // with "private_key_jwt" as its legacy preference, and uses `none` with a server that
+        // offers only that.
+        if (!self::supportsPublicClient($document) || isset($document['client_secret'])) {
             return null;
         }
 
@@ -208,6 +211,22 @@ final class ClientRegistry
         set_transient($cacheKey, $client, self::CIMD_CACHE_TTL);
 
         return $client;
+    }
+
+    /**
+     * Whether a client metadata document allows token requests without client
+     * authentication (`none`), the only method this server offers.
+     *
+     * @param array<string, mixed> $document
+     */
+    private static function supportsPublicClient(array $document): bool
+    {
+        $methods = $document['token_endpoint_auth_methods_supported'] ?? null;
+        if (\is_array($methods)) {
+            return \in_array('none', $methods, true);
+        }
+
+        return 'none' === ($document['token_endpoint_auth_method'] ?? 'none');
     }
 
     /**
