@@ -4,6 +4,7 @@ namespace BitApps\AiKit\Tests\Settings;
 
 use BitApps\AiKit\Contract;
 use BitApps\AiKit\Kit;
+use BitApps\AiKit\Settings\FeatureFlags;
 use BitApps\AiKit\Settings\McpSettings;
 use BitApps\AiKit\Tests\TestCase;
 
@@ -45,5 +46,16 @@ final class McpSettingsTest extends TestCase
         self::assertSame(['list_a' => true, 'save_b' => false], array_column($state['tools'], 'enabled', 'name'));
         self::assertSame('pro', $state['tools'][1]['tier']);
         self::assertContains('abilities_api', array_column($state['requirements'], 'id'));
+    }
+
+    public function testOAuthIsOnByDefault(): void
+    {
+        update_option('permalink_structure', '/%postname%/');
+        $kit = Kit::boot($this->context());
+        $kit->saveMcpSettings(['enabled' => true]);
+
+        self::assertTrue($kit->mcpSettings()->read()['oauth']);
+        self::assertTrue((new FeatureFlags($this->context()))->isEnabled(FeatureFlags::OAUTH));
+        self::assertTrue($kit->oauthEnabled());
     }
 }

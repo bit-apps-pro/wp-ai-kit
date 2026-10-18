@@ -6,6 +6,13 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-18
+
+### Changed
+- "Sign in with OAuth" (`oauth` MCP setting and feature) is on by default, so AI apps that only connect through
+  OAuth (Claude.ai, ChatGPT, Gemini) work once the MCP server is switched on. OAuth still needs the MCP server
+  on and pretty permalinks.
+
 ## [1.1.0] - 2026-10-18
 
 ### Added
@@ -94,6 +101,7 @@ First release.
 - `PluginContext::create()` threw an unqualified `InvalidArgumentException` (a fatal) for non-string
   `instructions`.
 
-[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/bit-apps-pro/wp-ai-kit/releases/tag/v1.0.0

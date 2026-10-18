@@ -67,7 +67,7 @@ final class FeatureFlags
     {
         $this->defaults = array_merge([
             self::MCP_SERVER       => false,
-            self::OAUTH            => false,
+            self::OAUTH            => true,
             self::API_KEYS         => false,
             self::ADAPTER_BRIDGE   => true,
             self::ABILITIES_BRIDGE => true,

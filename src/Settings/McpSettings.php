@@ -22,7 +22,7 @@ final class McpSettings
         'confirm_destructive'      => true,
         'allow_personal_data'      => false,
         'api_keys'                 => false,
-        'oauth'                    => false,
+        'oauth'                    => true,
         'expose_on_default_server' => false,
         'abilities_in_rest'        => false,
         'calls_per_minute'         => 120,
