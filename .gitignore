@@ -1,0 +1,9 @@
+/vendor/
+/composer.lock
+/.php-cs-fixer.cache
+/.phpunit.result.cache
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
