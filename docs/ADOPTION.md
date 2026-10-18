@@ -65,8 +65,12 @@ visitor-written text with `Security\UntrustedContent::wrap()`.
   `Kit::oauthConnections()` / `Kit::revokeOAuthConnection($id)`; deleting a user
   revokes theirs. Storage: two non-autoloaded options by default; pass a
   `services.oauth_storage` implementing `Mcp\OAuth\OAuthStorageInterface` to keep
-  existing rows or use a table. `services.brand` (`['color' => '#hex']`) tints the
-  consent screen.
+  existing rows or use a table. `services.brand` colours the consent screen:
+  `color` (accent: name, buttons, radios), `background` (page), and
+  `color_dark` / `background_dark` for visitors in dark mode. Hex values only;
+  a missing key falls back to `ConsentScreen::DEFAULT_PALETTE` (`color_dark` to
+  your `color` first), and the button text turns black or white to stay readable
+  on the accent.
 - A settings screen reads `Kit::adminState()` and saves through
   `Kit::saveMcpSettings($input)`; the kit validates every key.
 - On WordPress 6.9+ the tools are mirrored as abilities (category

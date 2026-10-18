@@ -19,6 +19,14 @@ use BitApps\AiKit\Tools\Scopes;
  */
 final class ConsentScreen
 {
+    /** The consent screen's colours when the plugin's `brand` service gives none. */
+    public const DEFAULT_PALETTE = [
+        'color'           => '#1d4ed8',
+        'color_dark'      => '#60a5fa',
+        'background'      => '#f8fafc',
+        'background_dark' => '#0f172a',
+    ];
+
     private const NONCE_FIELD = '_bitapps_oauth_nonce';
 
     /**
@@ -268,19 +276,61 @@ final class ConsentScreen
 
     private function document(string $body): string
     {
-        $brand = $this->context->service('brand');
-        $color = \is_array($brand) && \is_string($brand['color'] ?? null) && preg_match('/^#[0-9a-f]{3,8}$/i', $brand['color']) ? $brand['color'] : '#1d4ed8';
-
         return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             . '<meta name="robots" content="noindex, nofollow"><title>' . esc_html($this->context->name() . ' · Connect an AI app') . '</title>'
-            . '<style>' . self::styles($color) . '</style></head><body><main>'
+            . '<style>' . self::styles($this->palette()) . '</style></head><body><main>'
             . '<div class="brand">' . esc_html($this->context->name()) . '</div>' . $body . '</main></body></html>';
     }
 
-    private static function styles(string $color): string
+    /**
+     * The page colours from the plugin's `brand` service. A key left out, or not
+     * a hex colour, falls back: `color_dark` to the plugin's `color` when it gave
+     * one, everything else to DEFAULT_PALETTE.
+     *
+     * @return array{color: string, color_dark: string, background: string, background_dark: string}
+     */
+    private function palette(): array
     {
-        return ':root{--c:' . $color . ';--fg:#0f172a;--mute:#64748b;--line:#e2e8f0;--bg:#f8fafc;--card:#fff}'
-            . '@media(prefers-color-scheme:dark){:root{--fg:#e2e8f0;--mute:#94a3b8;--line:#334155;--bg:#0f172a;--card:#111827}}'
+        $brand = $this->context->service('brand');
+        $pick = static function (string $key) use ($brand): ?string {
+            $value = \is_array($brand) ? ($brand[$key] ?? null) : null;
+
+            return \is_string($value) && preg_match('/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i', $value) ? $value : null;
+        };
+        $color = $pick('color');
+
+        return [
+            'color'           => $color ?? self::DEFAULT_PALETTE['color'],
+            'color_dark'      => $pick('color_dark') ?? $color ?? self::DEFAULT_PALETTE['color_dark'],
+            'background'      => $pick('background') ?? self::DEFAULT_PALETTE['background'],
+            'background_dark' => $pick('background_dark') ?? self::DEFAULT_PALETTE['background_dark'],
+        ];
+    }
+
+    /** Black or white, whichever reads better on the given colour (WCAG relative luminance). */
+    private static function textOn(string $hex): string
+    {
+        $hex = ltrim($hex, '#');
+        if (3 === \strlen($hex)) {
+            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+        }
+        $channel = static function (string $pair): float {
+            $c = hexdec($pair) / 255;
+
+            return $c <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4;
+        };
+        $luminance = 0.2126 * $channel(substr($hex, 0, 2)) + 0.7152 * $channel(substr($hex, 2, 2)) + 0.0722 * $channel(substr($hex, 4, 2));
+
+        // Contrast with white is 1.05 / (L + 0.05), with black (L + 0.05) / 0.05; they cross at L ≈ 0.179.
+        return $luminance > 0.179 ? '#0f172a' : '#fff';
+    }
+
+    /** @param array{color: string, color_dark: string, background: string, background_dark: string} $palette */
+    private static function styles(array $palette): string
+    {
+        return ':root{--c:' . $palette['color'] . ';--on-c:' . self::textOn($palette['color']) . ';--fg:#0f172a;--mute:#64748b;--line:#e2e8f0;--bg:' . $palette['background'] . ';--card:#fff}'
+            . '@media(prefers-color-scheme:dark){:root{--c:' . $palette['color_dark'] . ';--on-c:' . self::textOn($palette['color_dark'])
+            . ';--fg:#e2e8f0;--mute:#94a3b8;--line:#334155;--bg:' . $palette['background_dark'] . ';--card:#111827}}'
             . '*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--bg);color:var(--fg);'
             . 'font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}'
             . 'main{width:100%;max-width:460px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px}'
@@ -288,9 +338,10 @@ final class ConsentScreen
             . '.note{padding:8px 12px;border-radius:8px;font-size:13px;margin:0 0 14px}.ok{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}'
             . 'dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0 0 16px;font-size:14px}dt{color:var(--mute)}dd{margin:0;text-align:right;word-break:break-word}'
             . 'fieldset{border:0;padding:0;margin:0 0 8px}legend{font-weight:600;margin-bottom:6px}'
-            . '.choice{display:flex;gap:10px;align-items:flex-start;padding:8px 0;cursor:pointer}.choice small{display:block;color:var(--mute)}.choice input{margin-top:4px}'
+            . '.choice{display:flex;gap:10px;align-items:flex-start;padding:8px 0;cursor:pointer}.choice small{display:block;color:var(--mute)}.choice input{margin-top:4px;accent-color:var(--c)}'
             . '.hint{font-size:12.5px;color:var(--mute)}.actions{display:flex;gap:10px;justify-content:flex-end}'
             . 'button{cursor:pointer;border-radius:8px;padding:9px 20px;font:inherit;border:1px solid var(--line)}'
-            . '.ghost{background:transparent;color:var(--fg)}.primary{background:var(--c);border-color:var(--c);color:#fff}';
+            . '.ghost{background:transparent;color:var(--fg)}.primary{background:var(--c);border-color:var(--c);color:var(--on-c)}'
+            . 'button:focus-visible{outline:2px solid var(--c);outline-offset:2px}';
     }
 }

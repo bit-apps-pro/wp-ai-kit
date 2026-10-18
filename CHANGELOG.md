@@ -63,6 +63,11 @@ All notable changes to this package. Format: Keep a Changelog; versioning: SemVe
   an empty autoloaded placeholder on first read. The MCP hooks read the settings on every REST request, which
   cost one database query each while the options were not autoloaded or did not exist.
 
+### Changed
+- The consent screen takes `background`, `color_dark` and `background_dark` from `services.brand` beside
+  `color`, falling back to the new `ConsentScreen::DEFAULT_PALETTE`. The primary button's text is black or
+  white, whichever reads better on the accent, and the access-level radios and checkbox use the accent.
+
 ### Fixed
 - Client metadata documents are accepted when `none` is among `token_endpoint_auth_methods_supported`,
   whatever the legacy `token_endpoint_auth_method` says. ChatGPT publishes `["none", "private_key_jwt"]`

@@ -267,6 +267,36 @@ final class OAuthServerTest extends TestCase
         self::assertSame('DENY', ConsentScreen::headers()['X-Frame-Options']);
     }
 
+    public function testConsentScreenTakesThePluginColours(): void
+    {
+        Kit::reset();
+        Kit::boot($this->context(['services' => ['brand' => [
+            'color'           => '#3c4b6d',
+            'color_dark'      => '#909ebb',
+            'background'      => '#f0f1f5',
+            'background_dark' => 'red; } body { display:none',
+        ]]]));
+        $client = $this->register();
+        $html = $this->consent('GET', $this->authorizeParams($client['client_id']))['html'];
+
+        self::assertStringContainsString('--c:#3c4b6d;--on-c:#fff;', $html, 'white text on a dark accent');
+        self::assertStringContainsString('--c:#909ebb;--on-c:#0f172a;', $html, 'dark text on a light accent');
+        self::assertStringContainsString('--bg:#f0f1f5;', $html);
+        self::assertStringContainsString('--bg:#0f172a;', $html, 'a value that is not a hex colour keeps the default');
+        self::assertStringNotContainsString('display:none', $html);
+    }
+
+    public function testConsentScreenFallsBackToTheDefaultColours(): void
+    {
+        $client = $this->register();
+        $html = $this->consent('GET', $this->authorizeParams($client['client_id']))['html'];
+
+        self::assertStringContainsString('--c:' . ConsentScreen::DEFAULT_PALETTE['color'] . ';', $html);
+        self::assertStringContainsString('--c:' . ConsentScreen::DEFAULT_PALETTE['color_dark'] . ';', $html);
+        self::assertStringContainsString('--bg:' . ConsentScreen::DEFAULT_PALETTE['background'] . ';', $html);
+        self::assertStringContainsString('--bg:' . ConsentScreen::DEFAULT_PALETTE['background_dark'] . ';', $html);
+    }
+
     public function testConsentNeedsAValidNonceAndCanBeDeclined(): void
     {
         $client = $this->register();
