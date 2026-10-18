@@ -330,7 +330,7 @@ final class Kit
     {
         $oauth = $this->oauth();
 
-        return null !== $oauth ? $oauth->tokens()->revokeAll() : 0;
+        return $oauth?->tokens()->revokeAll() ?? 0;
     }
 
     /**
@@ -346,7 +346,7 @@ final class Kit
         }
 
         $oauth = $this->oauth();
-        $document = null !== $oauth ? $oauth->wellKnownDocument((string) parse_url($uri, PHP_URL_PATH)) : null;
+        $document = $oauth?->wellKnownDocument((string) parse_url($uri, PHP_URL_PATH));
         if (null === $document) {
             return;
         }

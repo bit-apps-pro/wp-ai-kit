@@ -25,7 +25,7 @@ final class CoreAiClientEngine implements EngineInterface
 
         try {
             return true === wp_ai_client_prompt('ping')->is_supported_for_text_generation();
-        } catch (\Throwable $error) {
+        } catch (\Throwable) {
             return false;
         }
     }

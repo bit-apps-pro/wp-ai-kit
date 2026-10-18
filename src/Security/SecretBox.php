@@ -42,7 +42,7 @@ final class SecretBox
 
         try {
             $plain = sodium_crypto_secretbox_open(substr($raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES), substr($raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES), $this->key());
-        } catch (\Throwable $error) {
+        } catch (\Throwable) {
             return '';
         }
 

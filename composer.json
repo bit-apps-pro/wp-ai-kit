@@ -58,6 +58,7 @@
       "@lint",
       "@compat",
       "@prefix-check",
+      "@rector",
       "@test"
     ]
   },

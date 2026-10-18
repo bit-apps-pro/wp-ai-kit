@@ -68,16 +68,11 @@ final class Assistant
                 : 'Save an API key for the chosen provider.'];
         }
 
-        switch ($provider) {
-            case OpenAiProvider::KEY:
-                return ['engine' => new OpenAiProvider($key), 'reason' => null];
-
-            case GeminiProvider::KEY:
-                return ['engine' => new GeminiProvider($key), 'reason' => null];
-
-            default:
-                return ['engine' => new ClaudeProvider($key), 'reason' => null];
-        }
+        return match ($provider) {
+            OpenAiProvider::KEY => ['engine' => new OpenAiProvider($key), 'reason' => null],
+            GeminiProvider::KEY => ['engine' => new GeminiProvider($key), 'reason' => null],
+            default             => ['engine' => new ClaudeProvider($key), 'reason' => null],
+        };
     }
 
     /**
@@ -214,7 +209,7 @@ final class Assistant
                     $definition = $this->registry->get((string) $toolCall['name']);
                     $tools[] = [
                         'name'  => (string) $toolCall['name'],
-                        'title' => null !== $definition ? $definition->title() : (string) $toolCall['name'],
+                        'title' => $definition?->title() ?? (string) $toolCall['name'],
                         'error' => $results[(string) $toolCall['id']] ?? false,
                     ];
                 }
@@ -229,8 +224,8 @@ final class Assistant
             $definition = $this->registry->get((string) $conversation['pending']['name']);
             $pending = [
                 'name'        => (string) $conversation['pending']['name'],
-                'title'       => null !== $definition ? $definition->title() : (string) $conversation['pending']['name'],
-                'description' => null !== $definition ? $definition->description() : '',
+                'title'       => $definition?->title() ?? (string) $conversation['pending']['name'],
+                'description' => $definition?->description() ?? '',
                 'destructive' => null !== $definition && $definition->isDestructive(),
                 'input'       => (array) $conversation['pending']['input'],
             ];
