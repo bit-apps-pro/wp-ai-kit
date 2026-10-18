@@ -4,10 +4,11 @@ All notable changes to this package. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the package uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): within a major version, changes are additive only.
 
-## [1.0.1]- 2026-10-18
+## [Unreleased]
+
+## [1.1.0] - 2026-10-18
 
 ### Added
-
 - `services.brand` takes `background`, `color_dark` and `background_dark` beside `color`, so the consent
   screen can follow the plugin's colours in light and dark mode. Hex values only; a missing key falls back to
   the new `ConsentScreen::DEFAULT_PALETTE` (`color_dark` to the plugin's `color` first).
@@ -93,5 +94,6 @@ First release.
 - `PluginContext::create()` threw an unqualified `InvalidArgumentException` (a fatal) for non-string
   `instructions`.
 
-[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/bit-apps-pro/wp-ai-kit/releases/tag/v1.0.0
