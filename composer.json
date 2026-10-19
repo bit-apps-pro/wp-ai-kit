@@ -4,10 +4,16 @@
   "keywords": ["WordPress", "MCP", "AI", "abilities", "oauth"],
   "license": "GPL-2.0-or-later",
   "type": "library",
-  "homepage": "https://github.com/Bit-Apps-Pro/wp-ai-kit",
+  "authors": [
+    {
+      "name": "Bit Apps",
+      "homepage": "https://bitapps.pro"
+    }
+  ],
+  "homepage": "https://github.com/bit-apps-pro/wp-ai-kit",
   "support": {
-    "issues": "https://github.com/Bit-Apps-Pro/wp-ai-kit/issues",
-    "source": "https://github.com/Bit-Apps-Pro/wp-ai-kit"
+    "issues": "https://github.com/bit-apps-pro/wp-ai-kit/issues",
+    "source": "https://github.com/bit-apps-pro/wp-ai-kit"
   },
   "archive": {
     "exclude": [
@@ -64,7 +70,7 @@
   },
   "extra": {
     "branch-alias": {
-      "dev-main": "0.x-dev"
+      "dev-main": "1.x-dev"
     }
   },
   "config": {

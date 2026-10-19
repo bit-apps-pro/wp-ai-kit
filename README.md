@@ -27,17 +27,11 @@ has no admin UI; the plugin builds its settings screens on the kit's PHP API.
 
 ## Install (in a plugin)
 
-The package is not on Packagist yet, so add the repository first, then require a
-released version (see `CHANGELOG.md`):
-
-```json
-"repositories": {
-  "aikit": { "type": "vcs", "url": "https://github.com/bit-apps-pro/wp-ai-kit.git" }
-},
-"require": {
-  "bitapps/wp-ai-kit": "^1.1"
-}
+```bash
+composer require bitapps/wp-ai-kit
 ```
+
+Require a released version (`^1.1`; see `CHANGELOG.md`) rather than `dev-main`.
 
 Each plugin prefixes the kit into its own namespace, like `bitapps/wp-kit`, so every
 plugin carries an isolated copy and two plugins on different kit versions coexist.
@@ -64,7 +58,7 @@ use BitApps\MyPlugin\Deps\BitApps\AiKit\PluginContext;
 
 add_action('plugins_loaded', static function (): void {
     Kit::boot(PluginContext::create([
-        'slug'           => 'bitform',
+        'slug'           => 'bit-form',
         'name'           => 'Bit Form',
         'version'        => BITFORMS_VERSION,
         'option_prefix'  => 'bitforms_',
@@ -140,13 +134,13 @@ The plugin owns the UI; the kit owns validation and storage. Call these on
 `$kit = Kit::for('bitform')` from the plugin's own admin endpoints, which check the
 user's capability first:
 
-| Screen | Read | Save / act |
-| --- | --- | --- |
-| MCP server | `$kit->adminState()` (settings, tools, endpoint, requirements, OAuth, API keys) | `$kit->saveMcpSettings($input)` |
-| Connected apps | `$kit->oauthConnections()` | `$kit->revokeOAuthConnection($id)`, `revokeAllOAuthConnections()` |
-| API keys | `$kit->adminState()['api_keys']` | `$kit->createApiKey(...)`, `$kit->apiKeys()->revoke(...)` |
-| AI assistant | `$kit->assistantState()` | `$kit->saveAiSettings($input)` |
-| Chat panel | `$kit->assistant()->view($userId)`, `history()` | `chat()`, `decide()`, `reset()`, `open()`, `forget()` |
+| Screen         | Read                                                                            | Save / act                                                        |
+| -------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| MCP server     | `$kit->adminState()` (settings, tools, endpoint, requirements, OAuth, API keys) | `$kit->saveMcpSettings($input)`                                   |
+| Connected apps | `$kit->oauthConnections()`                                                      | `$kit->revokeOAuthConnection($id)`, `revokeAllOAuthConnections()` |
+| API keys       | `$kit->adminState()['api_keys']`                                                | `$kit->createApiKey(...)`, `$kit->apiKeys()->revoke(...)`         |
+| AI assistant   | `$kit->assistantState()`                                                        | `$kit->saveAiSettings($input)`                                    |
+| Chat panel     | `$kit->assistant()->view($userId)`, `history()`                                 | `chat()`, `decide()`, `reset()`, `open()`, `forget()`             |
 
 Unknown keys are dropped and every value is validated, so the input can be posted as-is.
 
@@ -155,28 +149,28 @@ Unknown keys are dropped and every value is validated, so the input can be poste
 Required `PluginContext::create()` keys: `slug`, `name`, `version`, `option_prefix`
 (lowercase `[a-z0-9_]`), `rest_namespace`. Optional:
 
-| Key | Purpose |
-| --- | --- |
-| `text_domain` | Defaults to the slug. |
-| `can_use` | `fn (int $userId): bool` — may this user use AI/MCP at all. Default `manage_options`. |
-| `can` | `fn (string $capability, ...$args): bool` for per-tool capabilities. Default `current_user_can`. |
-| `scope_map` | Legacy scope strings → `read` / `write` / `destructive`. |
-| `logger` | `fn (string $level, string $message, array $context)`. Default: `error_log` under `WP_DEBUG`. |
-| `urls` | Named admin URLs, e.g. `settings`. |
-| `instructions` | What the MCP server tells clients about the tools. |
-| `description`, `website_url`, `icons` | How MCP clients show the server (below). |
-| `features` | Which parts the plugin ships (below). |
-| `services` | Plugin-supplied pieces, all optional (below). |
+| Key                                   | Purpose                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `text_domain`                         | Defaults to the slug.                                                                            |
+| `can_use`                             | `fn (int $userId): bool` — may this user use AI/MCP at all. Default `manage_options`.            |
+| `can`                                 | `fn (string $capability, ...$args): bool` for per-tool capabilities. Default `current_user_can`. |
+| `scope_map`                           | Legacy scope strings → `read` / `write` / `destructive`.                                         |
+| `logger`                              | `fn (string $level, string $message, array $context)`. Default: `error_log` under `WP_DEBUG`.    |
+| `urls`                                | Named admin URLs, e.g. `settings`.                                                               |
+| `instructions`                        | What the MCP server tells clients about the tools.                                               |
+| `description`, `website_url`, `icons` | How MCP clients show the server (below).                                                         |
+| `features`                            | Which parts the plugin ships (below).                                                            |
+| `services`                            | Plugin-supplied pieces, all optional (below).                                                    |
 
-| Service | Purpose |
-| --- | --- |
-| `audit` | `Audit\AuditLoggerInterface`; default keeps the last events in an option. |
-| `conversations` | `Ai\ConversationRepositoryInterface`; default: user meta, one conversation per user. |
-| `oauth_storage` | `Mcp\OAuth\OAuthStorageInterface`; default: two options. |
-| `pii_classifier` | `callable` that marks fields as personal data for masking. |
-| `brand` | Consent screen colours: `color`, `background`, `color_dark`, `background_dark`. |
-| `assistant_persona` | Plugin-specific guidance added to the assistant's system prompt. |
-| `api_key_prefix` | Prefix of issued API keys; default `<slug>_key_`. |
+| Service             | Purpose                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `audit`             | `Audit\AuditLoggerInterface`; default keeps the last events in an option.            |
+| `conversations`     | `Ai\ConversationRepositoryInterface`; default: user meta, one conversation per user. |
+| `oauth_storage`     | `Mcp\OAuth\OAuthStorageInterface`; default: two options.                             |
+| `pii_classifier`    | `callable` that marks fields as personal data for masking.                           |
+| `brand`             | Consent screen colours: `color`, `background`, `color_dark`, `background_dark`.      |
+| `assistant_persona` | Plugin-specific guidance added to the assistant's system prompt.                     |
+| `api_key_prefix`    | Prefix of issued API keys; default `<slug>_key_`.                                    |
 
 `audit`, `conversations` and `oauth_storage` may be given as a factory
 (`fn () => new MyAuditLogger()`), so they are built on first use. Boot itself only
@@ -214,14 +208,14 @@ PluginContext::create([
 
 ## Hooks
 
-| Hook | Type | Use |
-| --- | --- | --- |
-| `bitapps_ai_tool_providers_<slug>` | filter | Add tool providers (`$providers`, `PluginContext`). |
-| `bitapps_ai_kit_booted_<slug>` | action | Runs once the kit has booted, with the `Kit`. |
-| `bitapps_ai_feature_disabled` | filter | `(bool $disabled, string $feature, string $slug)`: a host forces a feature off. |
-| `bitapps_ai_secret_keys` | filter | Extra key names to redact from tool output. |
-| `bitapps_ai_allowed_origins` | filter | Browser origins allowed to call the MCP endpoint. |
-| `bitapps_ai_client_ip` | filter | The client IP for rate limits behind a proxy or CDN. |
+| Hook                               | Type   | Use                                                                             |
+| ---------------------------------- | ------ | ------------------------------------------------------------------------------- |
+| `bitapps_ai_tool_providers_<slug>` | filter | Add tool providers (`$providers`, `PluginContext`).                             |
+| `bitapps_ai_kit_booted_<slug>`     | action | Runs once the kit has booted, with the `Kit`.                                   |
+| `bitapps_ai_feature_disabled`      | filter | `(bool $disabled, string $feature, string $slug)`: a host forces a feature off. |
+| `bitapps_ai_secret_keys`           | filter | Extra key names to redact from tool output.                                     |
+| `bitapps_ai_allowed_origins`       | filter | Browser origins allowed to call the MCP endpoint.                               |
+| `bitapps_ai_client_ip`             | filter | The client IP for rate limits behind a proxy or CDN.                            |
 
 Hosts can also force features off in `wp-config.php` with `<PREFIX>MCP_DISABLED` /
 `<PREFIX>AI_DISABLED`, where the prefix is the upper-cased option prefix
