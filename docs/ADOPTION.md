@@ -2,8 +2,8 @@
 
 > Audience: developers of Bit CRM, Bit PI (Bit Flows) and future Bit plugins.
 > Bit Form is the reference consumer; its adoption is in the Bit Form repository
-> (`docs/specs/mcp-ai-architecture.md`). This document is filled in as the kit's
-> phases land; sections marked *(pending)* describe planned API.
+> (`backend/app/Providers/AiProvider.php`). Start with the README's quick start;
+> this document goes deeper.
 
 ## 1. Decide the tier
 
@@ -18,7 +18,8 @@ array-based facade and never names the kit's prefixed classes.
 
 See `README.md`. Build one `PluginContext` from the plugin's own config: slug,
 name, version, option prefix, REST namespace, capability callbacks, scope map,
-URLs and optional services (`storage`, `audit`, `pii_classifier`).
+URLs and optional services (`oauth_storage`, `audit`, `conversations`, `pii_classifier`, `brand`,
+`assistant_persona`; the README lists them all).
 
 ## 3. Contribute tools
 
@@ -82,7 +83,7 @@ visitor-written text with `Security\UntrustedContent::wrap()`.
 `Kit::assistant()->chat($userId, $message, $pageContext)`, `->decide($userId, $approve)`,
 `->reset($userId)` and `->view($userId)` drive an in-admin chat; `Kit::assistantState()` and
 `Kit::saveAiSettings($input)` back its settings screen. The engine is the WordPress AI Client when the site
-set up a provider in Settings → Connectors (WordPress 7.0+), otherwise the plugin's saved key for Claude,
+set up a provider in WordPress Settings → Connectors (WordPress 7.0+), otherwise the plugin's saved key for Claude,
 OpenAI or Gemini. Tools run through the same `ToolRunner` as MCP, on channel `assistant`, with the access level
 from `<prefix>ai_settings`; destructive tools return a `pending` action the user approves or cancels in the UI
 (never the model). Build the page-context sentence on the server from ids, not from browser text. Supply
@@ -106,7 +107,7 @@ options `bit_pi_pro_mcp_oauth_clients`, `bit_pi_pro_mcp_oauth_tokens`,
 `bit_pi_pro_mcp_api_key`, `bit_pi_pro_mcp_server_settings`, token prefixes
 `bfmcp_at_` / `bfmcp_rt_` / `bfmcp_key_`, client ids `bfmcp_`, scopes
 `flow:read … settings:write`, authorization-code TTL 300 s, and the rule that a
-token record without `scopes` means full access. The kit's `Mcp\Storage` adapter
+token record without `scopes` means full access. The kit's default `OptionsOAuthStorage`
 cannot read these records as they are: PI stores one row per token (access and
 refresh separately, `type`, `scopes` array). Write an `OAuthStorageInterface`
 adapter that presents PI's rows as kit grants (pair access+refresh rows by
@@ -136,4 +137,16 @@ to admin-post.php; clients pick it up from the metadata on their next sign-in. T
 providers, streaming and agent loop move into the kit's `Ai\*`; `SystemPrompt`,
 `SummaryBrief` and the chat UI stay in CRM.
 
-## 6. Checklist *(pending)*
+## 6. Checklist
+
+- [ ] Kit required from the right tier, prefixed (Imposter or Strauss), no `path` repository in the release build.
+- [ ] `PluginContext` with a final `slug` (it keys abilities and encrypted keys) and the plugin's `can_use`.
+- [ ] Boot wrapped so an exception cannot take the plugin down.
+- [ ] Tool providers on `bitapps_ai_tool_providers_<slug>`: model-readable descriptions, honest
+      `readonly` / `destructive` annotations, `personal_data` where entries are returned, a
+      `resource_check` where a user may reach only some records.
+- [ ] Settings screens on `adminState()` / `saveMcpSettings()` and `assistantState()` / `saveAiSettings()`,
+      behind the plugin's capability check.
+- [ ] Uninstall deletes the kit's options and user meta (README, "What the kit stores").
+- [ ] Privacy: the plugin's privacy exporters/erasers cover conversations and the audit log if it keeps them.
+- [ ] Tested with an Application Password (`curl … tools/list`) and one OAuth app (Claude.ai or ChatGPT).
