@@ -57,15 +57,15 @@ final class Assistant
             return ['engine' => new CoreAiClientEngine(), 'reason' => null];
         }
         if ('wordpress' === $mode) {
-            return ['engine' => null, 'reason' => 'No AI provider is set up in Settings → Connectors (needs WordPress 7.0 or newer).'];
+            return ['engine' => null, 'reason' => 'No AI provider is set up in WordPress Settings → Connectors (needs WordPress 7.0 or newer).'];
         }
 
         $provider = (string) $settings['provider'];
         $key = $this->settings->apiKey($provider);
         if ('' === $key) {
             return ['engine' => null, 'reason' => 'auto' === $mode
-                ? 'Set up an AI provider in Settings → Connectors, or save an API key here.'
-                : 'Save an API key for the chosen provider.'];
+                ? 'Set up an AI provider in WordPress Settings → Connectors, or save an API key in the AI engine section of the assistant settings.'
+                : 'Save an API key for the chosen provider in the AI engine section of the assistant settings.'];
         }
 
         return match ($provider) {

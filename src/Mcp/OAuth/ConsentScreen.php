@@ -235,7 +235,7 @@ final class ConsentScreen
                 . '<span><strong>Show personal data</strong><small>Email addresses, phone numbers, names and addresses in entries. Off: they are masked before the AI app sees them.</small></span></label>';
         }
 
-        $html .= '<p class="hint">' . esc_html(sprintf('You can disconnect this app at any time in %s under AI & MCP.', $this->context->name())) . '</p>';
+        $html .= '<p class="hint">' . esc_html(sprintf('You can disconnect this app at any time in the %s MCP server settings.', $this->context->name())) . '</p>';
         $html .= '<div class="actions"><button type="submit" name="deny" value="1" class="ghost">Cancel</button><button type="submit" name="approve" value="1" class="primary">Allow</button></div>';
         $html .= '</form>';
 

@@ -73,7 +73,7 @@ final class RequirementsReport
                 'id'     => 'ai_client',
                 'label'  => 'WordPress AI Client',
                 'status' => $connector ? self::PASS : self::INFO,
-                'detail' => $connector ? 'The AI Assistant can use the providers configured in Settings → Connectors.' : ($aiClient ? 'No AI provider connected yet (Settings → Connectors).' : 'Available from WordPress 7.0; optional.'),
+                'detail' => $connector ? 'The AI Assistant can use the providers configured in WordPress Settings → Connectors.' : ($aiClient ? 'No AI provider connected yet (WordPress Settings → Connectors).' : 'Available from WordPress 7.0; optional.'),
             ],
             [
                 'id'     => 'mcp_adapter',

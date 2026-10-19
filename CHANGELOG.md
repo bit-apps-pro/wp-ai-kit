@@ -6,11 +6,19 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-19
+
 ### Added
 - `PluginContext` keys `description`, `website_url` and `icons`, sent in the MCP `initialize` reply's
   `serverInfo` (`description`, `websiteUrl`, `icons`; MCP 2025-11-25) so clients can show the plugin's
   website and logo. Icons keep MCP's shape (http(s) or `data:image/` source, optional `mimeType`, `sizes`,
   `theme`); an invalid URL or icon is dropped. Empty values are not sent.
+
+### Changed
+- User-facing messages name WordPress's own menu as "WordPress Settings → Connectors", so it is not read as a
+  plugin settings tab. The assistant's missing-key messages point to the AI engine section of the assistant
+  settings instead of "here", which was wrong in the chat panel. The consent screen says the app can be
+  disconnected in the plugin's MCP server settings instead of a stale "AI & MCP" menu name.
 
 ## [1.1.1] - 2026-10-18
 
@@ -107,7 +115,8 @@ First release.
 - `PluginContext::create()` threw an unqualified `InvalidArgumentException` (a fatal) for non-string
   `instructions`.
 
-[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/bit-apps-pro/wp-ai-kit/releases/tag/v1.0.0
