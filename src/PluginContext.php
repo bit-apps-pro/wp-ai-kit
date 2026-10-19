@@ -63,6 +63,13 @@ final class PluginContext
 
     private string $instructions;
 
+    private string $description;
+
+    private string $websiteUrl;
+
+    /** @var list<array{src: string, mimeType?: string, sizes?: string[], theme?: string}> */
+    private array $icons;
+
     /** @var array<string, bool> which features this plugin ships (FEATURE_*) */
     private array $features;
 
@@ -84,6 +91,9 @@ final class PluginContext
         $this->urls = $args['urls'];
         $this->services = $args['services'];
         $this->instructions = $args['instructions'];
+        $this->description = $args['description'];
+        $this->websiteUrl = $args['website_url'];
+        $this->icons = $args['icons'];
         $this->features = $args['features'];
     }
 
@@ -94,6 +104,10 @@ final class PluginContext
      * `logger` (callable(string $level, string $message, array $context): void),
      * `urls` (array<string,string>), `services` (array<string,mixed>),
      * `instructions` (string: what the MCP server tells clients about the tools),
+     * `description` (string), `website_url` (http/https URL) and `icons` (list of MCP icons:
+     * `src` (https or data:image URI), optional `mimeType`, `sizes` ("48x48" or "any") and
+     * `theme` ("light"/"dark")), which describe the server to MCP clients in `serverInfo`;
+     * an invalid URL or icon entry is left out rather than failing the boot,
      * `features` (array<string,bool>: which of FEATURE_MCP / FEATURE_ASSISTANT the plugin
      * ships; both by default. A feature left out registers no hooks and can never be
      * switched on, whatever its settings say).
@@ -129,6 +143,9 @@ final class PluginContext
             'urls'         => [],
             'services'     => [],
             'instructions' => '',
+            'description'  => '',
+            'website_url'  => '',
+            'icons'        => [],
             'features'     => [],
         ];
 
@@ -140,15 +157,20 @@ final class PluginContext
             }
         }
 
-        if (!\is_string($args['instructions'])) {
-            throw new \InvalidArgumentException("PluginContext 'instructions' must be a string.");
+        foreach (['instructions', 'description', 'website_url'] as $string) {
+            if (!\is_string($args[$string])) {
+                throw new \InvalidArgumentException("PluginContext '{$string}' must be a string.");
+            }
         }
 
-        foreach (['scope_map', 'urls', 'services', 'features'] as $array) {
+        foreach (['scope_map', 'urls', 'services', 'features', 'icons'] as $array) {
             if (!\is_array($args[$array])) {
                 throw new \InvalidArgumentException("PluginContext '{$array}' must be an array.");
             }
         }
+
+        $args['website_url'] = self::isWebUrl($args['website_url']) ? $args['website_url'] : '';
+        $args['icons'] = self::cleanIcons($args['icons']);
 
         $args['features'] = [
             self::FEATURE_MCP       => (bool) ($args['features'][self::FEATURE_MCP] ?? true),
@@ -235,6 +257,24 @@ final class PluginContext
         return $this->instructions;
     }
 
+    /** What the server does, for MCP clients (`serverInfo.description`); empty when not given. */
+    public function description(): string
+    {
+        return $this->description;
+    }
+
+    /** The plugin's website (`serverInfo.websiteUrl`); empty when not given or invalid. */
+    public function websiteUrl(): string
+    {
+        return $this->websiteUrl;
+    }
+
+    /** @return list<array{src: string, mimeType?: string, sizes?: string[], theme?: string}> `serverInfo.icons` */
+    public function icons(): array
+    {
+        return $this->icons;
+    }
+
     /**
      * A plugin-supplied service by name (e.g. 'storage', 'audit', 'pii_classifier');
      * adapters fall back to the kit's defaults when absent.
@@ -255,5 +295,44 @@ final class PluginContext
     public function provides(string $feature): bool
     {
         return $this->features[$feature] ?? false;
+    }
+
+    private static function isWebUrl(string $url): bool
+    {
+        return '' !== $url && false !== filter_var($url, FILTER_VALIDATE_URL) && \in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true);
+    }
+
+    /**
+     * Keep the icons in MCP's shape (2025-11-25 `Icon`): an http(s) or `data:image/`
+     * source, and only well-formed optional keys.
+     *
+     * @param array<mixed> $icons
+     *
+     * @return list<array{src: string, mimeType?: string, sizes?: string[], theme?: string}>
+     */
+    private static function cleanIcons(array $icons): array
+    {
+        $clean = [];
+        foreach ($icons as $icon) {
+            $src = \is_array($icon) && \is_string($icon['src'] ?? null) ? $icon['src'] : '';
+            if (!self::isWebUrl($src) && !preg_match('#^data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$#i', $src)) {
+                continue;
+            }
+
+            $entry = ['src' => $src];
+            if (\is_string($icon['mimeType'] ?? null) && preg_match('#^image/[a-z0-9.+-]+$#i', $icon['mimeType'])) {
+                $entry['mimeType'] = $icon['mimeType'];
+            }
+            $sizes = array_values(array_filter((array) ($icon['sizes'] ?? []), static fn ($size) => \is_string($size) && preg_match('/^(\d+x\d+|any)$/', $size)));
+            if ([] !== $sizes) {
+                $entry['sizes'] = $sizes;
+            }
+            if (\in_array($icon['theme'] ?? null, ['light', 'dark'], true)) {
+                $entry['theme'] = $icon['theme'];
+            }
+            $clean[] = $entry;
+        }
+
+        return $clean;
     }
 }

@@ -95,6 +95,25 @@ final class McpServer
     }
 
     /**
+     * Who this server is. `description`, `websiteUrl` and `icons` are new in
+     * 2025-11-25; they are sent on every revision, as older clients ignore keys
+     * they do not know.
+     *
+     * @return array<string, mixed>
+     */
+    private function serverInfo(): array
+    {
+        return array_filter([
+            'name'        => $this->context->slug(),
+            'title'       => $this->context->name(),
+            'version'     => $this->context->version(),
+            'description' => trim($this->context->description()),
+            'websiteUrl'  => $this->context->websiteUrl(),
+            'icons'       => $this->context->icons(),
+        ], static fn ($value) => '' !== $value && [] !== $value);
+    }
+
+    /**
      * @param array<string, mixed> $params
      *
      * @return array<string, mixed>
@@ -113,11 +132,7 @@ final class McpServer
                 'resources' => new \stdClass(),
                 'prompts'   => new \stdClass(),
             ],
-            'serverInfo' => [
-                'name'    => $this->context->slug(),
-                'title'   => $this->context->name(),
-                'version' => $this->context->version(),
-            ],
+            'serverInfo'   => $this->serverInfo(),
             'instructions' => $instructions,
         ];
     }

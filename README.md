@@ -60,6 +60,23 @@ The slug names the plugin's abilities (`bitform/list-forms`, which AI clients sh
 `wp_ability_bitform_list_forms`) and keys the encryption of stored provider API keys, so
 pick it once: changing it after a release orphans the saved keys.
 
+### How MCP clients see the server
+
+The MCP `initialize` reply names the server with `slug`, `name` and `version`. Optional context keys add
+what MCP 2025-11-25 clients may display: `description`, `website_url` and `icons`. An icon is
+`['src' => <https or data:image URI>, 'mimeType' => 'image/png', 'sizes' => ['256x256'], 'theme' => 'light'|'dark']`
+(all but `src` optional). Use a PNG or JPEG, as every client that shows icons must support those. An invalid URL
+or icon is left out, not an error:
+
+```php
+PluginContext::create([
+    // …
+    'description' => 'Forms, entries, notifications and workflows of the Bit Form plugin on this WordPress site.',
+    'website_url' => 'https://www.bitapps.pro/bit-form',
+    'icons'       => [['src' => plugins_url('static/bitform-icon.png', __FILE__), 'mimeType' => 'image/png', 'sizes' => ['256x256']]],
+]);
+```
+
 ### Shipping only part of the kit
 
 A plugin that wants only the assistant, or only the MCP server, says so at boot. A left-out feature registers

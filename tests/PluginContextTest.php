@@ -55,4 +55,31 @@ final class PluginContextTest extends TestCase
         self::assertNull($ctx->service('audit'));
         self::assertStringContainsString('#/ai', (string) $ctx->url('settings'));
     }
+
+    public function testWebsiteAndIconsAreKeptOnlyWhenWellFormed(): void
+    {
+        $ctx = $this->context([
+            'website_url' => 'javascript:alert(1)',
+            'icons'       => [
+                ['src' => 'https://example.test/logo.png', 'mimeType' => 'text/html', 'sizes' => ['48x48', 'huge', 3], 'theme' => 'dark'],
+                ['src' => 'data:image/png;base64,iVBORw0KGgo='],
+                ['src' => 'file:///etc/passwd'],
+                ['src' => 'data:text/html;base64,PHNjcmlwdD4='],
+                'not an icon',
+            ],
+        ]);
+
+        self::assertSame('', $ctx->websiteUrl());
+        self::assertSame([
+            ['src' => 'https://example.test/logo.png', 'sizes' => ['48x48'], 'theme' => 'dark'],
+            ['src' => 'data:image/png;base64,iVBORw0KGgo='],
+        ], $ctx->icons());
+        self::assertSame('https://example.test/', $this->context(['website_url' => 'https://example.test/'])->websiteUrl());
+    }
+
+    public function testDescriptionMustBeAString(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->context(['description' => ['not', 'a', 'string']]);
+    }
 }

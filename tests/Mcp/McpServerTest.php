@@ -45,6 +45,24 @@ final class McpServerTest extends TestCase
         self::assertStringContainsString(UntrustedContent::OPEN, $known['result']['instructions']);
     }
 
+    public function testServerInfoCarriesTheWebsiteAndIconsWhenGiven(): void
+    {
+        $plain = $this->send(['id' => 1, 'method' => 'initialize', 'params' => ['protocolVersion' => '2025-11-25']]);
+        self::assertSame(['name' => 'bit-demo', 'title' => 'Bit Demo', 'version' => '1.2.3'], $plain['result']['serverInfo'], 'nothing empty is sent');
+
+        Kit::reset();
+        $this->server = Kit::boot($this->context([
+            'description' => 'Forms and entries.',
+            'website_url' => 'https://example.test/bit-demo/',
+            'icons'       => [['src' => 'https://example.test/logo.png', 'mimeType' => 'image/png', 'sizes' => ['128x128']]],
+        ]))->mcpServer();
+        $info = $this->send(['id' => 2, 'method' => 'initialize', 'params' => ['protocolVersion' => '2025-11-25']])['result']['serverInfo'];
+
+        self::assertSame('Forms and entries.', $info['description']);
+        self::assertSame('https://example.test/bit-demo/', $info['websiteUrl']);
+        self::assertSame([['src' => 'https://example.test/logo.png', 'mimeType' => 'image/png', 'sizes' => ['128x128']]], $info['icons']);
+    }
+
     public function testListAndCall(): void
     {
         $list = $this->send(['id' => 1, 'method' => 'tools/list']);

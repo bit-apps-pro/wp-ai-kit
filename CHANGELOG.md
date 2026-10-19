@@ -6,6 +6,12 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+### Added
+- `PluginContext` keys `description`, `website_url` and `icons`, sent in the MCP `initialize` reply's
+  `serverInfo` (`description`, `websiteUrl`, `icons`; MCP 2025-11-25) so clients can show the plugin's
+  website and logo. Icons keep MCP's shape (http(s) or `data:image/` source, optional `mimeType`, `sizes`,
+  `theme`); an invalid URL or icon is dropped. Empty values are not sent.
+
 ## [1.1.1] - 2026-10-18
 
 ### Changed
