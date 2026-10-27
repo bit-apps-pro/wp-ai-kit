@@ -1,0 +1,118 @@
+/*
+ * Settings screens: the AI assistant form (AssistantSettingsForm), the save bar
+ * and the radio-card "choices" the MCP screen reuses. Ported from the Fela
+ * styles of the first host; colours only through --aikit-* tokens.
+ */
+
+/* --- page frame -------------------------------------------------------------- */
+
+.aikit-settings:where(.aikit, .aikit *) { width: 100%; max-width: 1000px; min-width: 0; }
+.aikit-settings__header:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.aikit-settings__title-row:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+/* The icon sits inside the heading so it takes the heading's colour. */
+.aikit-settings__title:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; color: var(--aikit-fg); }
+.aikit-settings__title-icon:where(.aikit, .aikit *) { flex-shrink: 0; color: var(--aikit-accent); }
+.aikit-settings__links:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 16px; font-size: 13px; }
+.aikit-settings__lead:where(.aikit, .aikit *) { margin: 6px 0 12px; max-width: 760px; font-size: 13px; line-height: 1.55; color: var(--aikit-fg-muted); }
+.aikit-settings__body:where(.aikit, .aikit *) { padding-top: 16px; }
+.aikit-settings__loading:where(.aikit, .aikit *) { display: flex; justify-content: center; padding: 32px 0; }
+
+/* --- cards and rows ---------------------------------------------------------- */
+
+.aikit-settings__card:where(.aikit, .aikit *) { margin-bottom: 16px; overflow: hidden; }
+.aikit-settings__h3:where(.aikit, .aikit *) { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--aikit-fg); }
+.aikit-settings__h3:where(.aikit, .aikit *) label { cursor: pointer; }
+/* Settings rows: spacing separates them, no rules between. */
+.aikit-settings__row:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; }
+.aikit-settings__row:where(.aikit, .aikit *) > .aikit-row__text { font-size: 13px; }
+.aikit-settings__row:where(.aikit, .aikit *) > .aikit-row__text > span { font-weight: 500; color: var(--aikit-fg); }
+/* Help text stays quiet: smaller and lighter than the label it explains. */
+.aikit-settings:where(.aikit, .aikit *) small { font-size: 12px; line-height: 1.5; color: var(--aikit-fg-muted); }
+.aikit-settings:where(.aikit, .aikit *) .aikit-row__text small { display: block; margin-top: 2px; }
+.aikit-settings__hint:where(.aikit, .aikit *) { display: block; margin-top: 10px; }
+.aikit-settings__rows:where(.aikit, .aikit *) { margin-top: 8px; }
+.aikit-settings:where(.aikit, .aikit *) .aikit-notice { margin: 8px 0 0; }
+.aikit-settings__body:where(.aikit, .aikit *) > .aikit-notice { margin: 0 0 12px; }
+
+/* Provider, model and key share one width so they line up. */
+.aikit-settings__control:where(.aikit, .aikit *) { width: 320px; max-width: 100%; flex-shrink: 1; }
+.aikit-settings__number:where(.aikit, .aikit *) { width: 96px; flex-shrink: 0; }
+.aikit-settings__key-group:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.aikit-settings__link:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 13px; color: var(--aikit-accent); }
+
+@media (max-width: 640px) {
+  .aikit-settings__row:where(.aikit, .aikit *) { flex-wrap: wrap; }
+  .aikit-settings__control:where(.aikit, .aikit *) { width: 100%; }
+}
+
+/* --- radio cards (engine, access level) -------------------------------------- */
+
+.aikit-choices:where(.aikit, .aikit *) { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 12px; }
+.aikit-choice:where(.aikit, .aikit *) {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  box-shadow: 0 0 0 0 transparent;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
+}
+.aikit-choice:hover:where(.aikit, .aikit *) { border-color: var(--aikit-accent); }
+.aikit-choice:focus-within:where(.aikit, .aikit *) { box-shadow: var(--aikit-focus); }
+/* The chosen card rings like a focused input, softened. */
+.aikit-choice--active:where(.aikit, .aikit *) { border-color: var(--aikit-accent); background: var(--aikit-accent-soft); }
+.aikit-choice__text:where(.aikit, .aikit *) { min-width: 0; }
+.aikit-choice__text:where(.aikit, .aikit *) strong { display: block; font-weight: 600; color: var(--aikit-fg); }
+.aikit-choice__text:where(.aikit, .aikit *) small { display: block; margin-top: 2px; }
+/* A drawn radio (the WordPress admin paints its own): a ring, then on check an accent ring with a gap around a solid centre. */
+.aikit-choice:where(.aikit, .aikit *) input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 1.5px solid var(--aikit-border-strong);
+  border-radius: 50%;
+  background: var(--aikit-bg);
+  box-shadow: none;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.aikit-choice:where(.aikit, .aikit *) input[type="radio"]::before { display: none; }
+.aikit-choice:where(.aikit, .aikit *) input[type="radio"]:checked { border-color: var(--aikit-accent); background: var(--aikit-accent); box-shadow: inset 0 0 0 3px var(--aikit-bg); }
+.aikit-choice:where(.aikit, .aikit *) input[type="radio"]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var(--aikit-bg); }
+
+/* --- recent activity --------------------------------------------------------- */
+
+.aikit-activity-list:where(.aikit, .aikit *) { list-style: none; margin: 0; padding: 4px 18px; }
+.aikit-activity-list:where(.aikit, .aikit *) li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--aikit-border); font-size: 13px; }
+.aikit-activity-list:where(.aikit, .aikit *) li:first-child { border-top: 0; }
+.aikit-activity-list:where(.aikit, .aikit *) code { padding: 0; background: transparent; font-size: 12px; font-weight: 500; color: var(--aikit-fg); }
+.aikit-activity-list__when:where(.aikit, .aikit *) { margin-left: auto; white-space: nowrap; }
+
+/* --- save bar ----------------------------------------------------------------- */
+
+.aikit-savebar:where(.aikit, .aikit *) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--aikit-warning);
+  border-radius: var(--aikit-radius);
+  background: var(--aikit-warning-soft);
+  color: var(--aikit-warning);
+  box-shadow: var(--aikit-shadow);
+  font-size: 13px;
+  font-weight: 500;
+}
+/* Pinned under the host's fixed bar while there is something to save. */
+.aikit-savebar--sticky:where(.aikit, .aikit *) { position: sticky; top: var(--aikit-sticky-top, 0px); z-index: var(--aikit-z); }
+.aikit-savebar__actions:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }

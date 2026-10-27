@@ -1,0 +1,153 @@
+{
+  "name": "@bitapps/wp-ai-kit-ui",
+  "version": "1.2.0",
+  "description": "Headless store, hooks and themeable React components for the Bit Apps WP AI Kit: the in-admin AI assistant chat, conversation history, and the AI / MCP settings screens.",
+  "license": "GPL-2.0-or-later",
+  "author": {
+    "name": "Bit Apps",
+    "url": "https://bitapps.pro"
+  },
+  "homepage": "https://github.com/bit-apps-pro/wp-ai-kit/tree/main/frontend#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bit-apps-pro/wp-ai-kit.git",
+    "directory": "frontend"
+  },
+  "bugs": {
+    "url": "https://github.com/bit-apps-pro/wp-ai-kit/issues"
+  },
+  "keywords": [
+    "wordpress",
+    "ai",
+    "mcp",
+    "assistant",
+    "react",
+    "bitapps"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "files": [
+    "dist",
+    "i18n",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./components": {
+      "types": "./dist/components/index.d.ts",
+      "import": "./dist/components.js"
+    },
+    "./antd": {
+      "types": "./dist/antd/index.d.ts",
+      "import": "./dist/antd.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "types": "./dist/core/index.d.ts",
+  "module": "./dist/core.js",
+  "typesVersions": {
+    "*": {
+      "core": [
+        "./dist/core/index.d.ts"
+      ],
+      "components": [
+        "./dist/components/index.d.ts"
+      ],
+      "antd": [
+        "./dist/antd/index.d.ts"
+      ]
+    }
+  },
+  "contract": "1",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "dev": "vite build --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "size": "size-limit",
+    "playground": "vite --config playground/vite.config.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm size && pnpm i18n:check && pnpm contract:check",
+    "i18n:extract": "node scripts/extract-strings.mjs",
+    "i18n:check": "node scripts/extract-strings.mjs --check",
+    "contract:check": "node scripts/check-contract.mjs",
+    "prepublishOnly": "pnpm check"
+  },
+  "peerDependencies": {
+    "antd": "^5.0.0",
+    "react": "^18.3.0 || ^19.0.0",
+    "react-dom": "^18.3.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "antd": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@size-limit/preset-small-lib": "^11.2.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^18.3.20",
+    "@types/react-dom": "^18.3.6",
+    "@vitejs/plugin-react": "^4.4.1",
+    "antd": "^5.24.0",
+    "jsdom": "^26.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "size-limit": "^11.2.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vite-plugin-dts": "^4.5.3",
+    "vitest": "^3.1.4"
+  },
+  "size-limit": [
+    {
+      "name": "core",
+      "path": "dist/core.js",
+      "limit": "12 kB"
+    },
+    {
+      "name": "components",
+      "path": "dist/components.js",
+      "limit": "45 kB",
+      "ignore": [
+        "react",
+        "react-dom"
+      ]
+    },
+    {
+      "name": "antd adapter",
+      "path": "dist/antd.js",
+      "limit": "4 kB",
+      "ignore": [
+        "react",
+        "react-dom",
+        "antd"
+      ]
+    },
+    {
+      "name": "styles",
+      "path": "dist/styles.css",
+      "limit": "8 kB"
+    }
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@10.9.0"
+}

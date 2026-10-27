@@ -1,0 +1,44 @@
+/* Shared by several components: markdown, thinking indicator, panel chrome. Area styles live in chat.css, history.css, settings.css, mcp.css. */
+
+.aikit-markdown:where(.aikit, .aikit *) p { margin: 0 0 8px; }
+.aikit-markdown:where(.aikit, .aikit *) p:last-child { margin-bottom: 0; }
+.aikit-markdown:where(.aikit, .aikit *) ul,
+.aikit-markdown:where(.aikit, .aikit *) ol { margin: 0 0 8px; padding-left: 20px; }
+.aikit-markdown:where(.aikit, .aikit *) li { margin: 2px 0; }
+
+.aikit-thinking:where(.aikit, .aikit *) {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 12px 12px 12px 2px;
+  background: var(--aikit-bg-soft);
+  font-size: 13px;
+}
+.aikit-thinking__dots:where(.aikit, .aikit *) { display: inline-flex; gap: 4px; }
+.aikit-thinking__dots:where(.aikit, .aikit *) span {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--aikit-accent);
+  animation: aikit-bounce 1.2s ease-in-out infinite;
+}
+.aikit-thinking__dots:where(.aikit, .aikit *) span:nth-child(2) { animation-delay: 0.16s; }
+.aikit-thinking__dots:where(.aikit, .aikit *) span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes aikit-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+.aikit-thinking__text:where(.aikit, .aikit *) {
+  font-weight: 500;
+  background: linear-gradient(90deg, var(--aikit-fg-muted) 40%, var(--aikit-accent) 50%, var(--aikit-fg-muted) 60%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: aikit-shimmer 2s linear infinite;
+}
+@keyframes aikit-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.aikit-thinking__time:where(.aikit, .aikit *) { font-size: 11px; color: var(--aikit-fg-faint); font-variant-numeric: tabular-nums; }

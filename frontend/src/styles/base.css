@@ -1,0 +1,302 @@
+/*
+ * Every rule is `.aikit-x:where(.aikit, .aikit *)`: one class of specificity, so
+ * a host's own styles win without `!important` (Bit Form's `#btcd-app` prefix,
+ * antd's classes, a host override), and it matches a component root that is
+ * itself `.aikit` as well as anything inside one. No resets, no element
+ * selectors outside `.aikit`, no fonts.
+ */
+/* Exported components each carry `.aikit`, so they work alone; nested inside another, they inherit. */
+:where(.aikit:not(.aikit .aikit)) {
+  font-family: var(--aikit-font);
+  font-size: var(--aikit-font-size);
+  line-height: var(--aikit-line);
+  color: var(--aikit-fg);
+  box-sizing: border-box;
+}
+
+:where(.aikit) *,
+:where(.aikit) *::before,
+:where(.aikit) *::after {
+  box-sizing: inherit;
+}
+
+:focus-visible:where(.aikit, .aikit *) {
+  outline: none;
+  box-shadow: var(--aikit-focus);
+}
+
+code:where(.aikit, .aikit *) {
+  font-family: var(--aikit-font-mono);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--aikit-bg-muted);
+}
+
+a:where(.aikit, .aikit *) {
+  color: var(--aikit-accent);
+}
+
+/* --- default slot primitives (`aikit-btn`, `aikit-input`, …) ---------------- */
+
+.aikit-btn:where(.aikit, .aikit *) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--aikit-control-height);
+  padding: 0 14px;
+  border: 1px solid var(--aikit-border-strong);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  color: var(--aikit-fg);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.aikit-btn:hover:not(:disabled):where(.aikit, .aikit *) { background: var(--aikit-bg-soft); }
+.aikit-btn:disabled:where(.aikit, .aikit *) { opacity: 0.55; cursor: not-allowed; }
+.aikit-btn--sm:where(.aikit, .aikit *) { height: 28px; padding: 0 10px; font-size: 12px; }
+.aikit-btn--primary:where(.aikit, .aikit *) { background: var(--aikit-accent); border-color: var(--aikit-accent); color: var(--aikit-accent-fg); }
+.aikit-btn--primary:hover:not(:disabled):where(.aikit, .aikit *) { background: var(--aikit-accent-hover); border-color: var(--aikit-accent-hover); }
+.aikit-btn--ghost:where(.aikit, .aikit *) { border-color: transparent; background: transparent; }
+.aikit-btn--ghost:hover:not(:disabled):where(.aikit, .aikit *) { background: var(--aikit-bg-muted); }
+.aikit-btn--danger:where(.aikit, .aikit *) { color: var(--aikit-danger); }
+.aikit-btn--danger:hover:not(:disabled):where(.aikit, .aikit *) { background: var(--aikit-danger-soft); border-color: var(--aikit-danger); }
+.aikit-btn--icon:where(.aikit, .aikit *) { padding: 0; width: var(--aikit-control-height); }
+.aikit-btn--sm.aikit-btn--icon:where(.aikit, .aikit *) { width: 28px; }
+
+.aikit-input:where(.aikit, .aikit *),
+.aikit-select:where(.aikit, .aikit *),
+.aikit-textarea:where(.aikit, .aikit *) {
+  width: 100%;
+  min-height: var(--aikit-control-height);
+  padding: 6px 10px;
+  border: 1px solid var(--aikit-border-strong);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  color: var(--aikit-fg);
+  font: inherit;
+}
+.aikit-input:disabled:where(.aikit, .aikit *),
+.aikit-select:disabled:where(.aikit, .aikit *),
+.aikit-textarea:disabled:where(.aikit, .aikit *) { background: var(--aikit-bg-soft); color: var(--aikit-fg-muted); }
+.aikit-input:where(.aikit, .aikit *)::placeholder,
+.aikit-textarea:where(.aikit, .aikit *)::placeholder { color: var(--aikit-fg-faint); }
+
+.aikit-switch:where(.aikit, .aikit *) {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--aikit-radius-pill);
+  background: var(--aikit-border-strong);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s;
+}
+.aikit-switch:where(.aikit, .aikit *)::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+.aikit-switch[aria-checked="true"]:where(.aikit, .aikit *) { background: var(--aikit-accent); }
+.aikit-switch[aria-checked="true"]:where(.aikit, .aikit *)::after { transform: translateX(16px); }
+.aikit-switch:disabled:where(.aikit, .aikit *) { opacity: 0.5; cursor: not-allowed; }
+
+.aikit-checkbox:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.aikit-checkbox:where(.aikit, .aikit *) input { accent-color: var(--aikit-accent); width: 15px; height: 15px; margin: 0; }
+
+.aikit-badge:where(.aikit, .aikit *) {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--aikit-radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  background: var(--aikit-bg-muted);
+  color: var(--aikit-fg-muted);
+}
+.aikit-badge--success:where(.aikit, .aikit *) { background: var(--aikit-success-soft); color: var(--aikit-success); }
+.aikit-badge--warning:where(.aikit, .aikit *) { background: var(--aikit-warning-soft); color: var(--aikit-warning); }
+.aikit-badge--danger:where(.aikit, .aikit *) { background: var(--aikit-danger-soft); color: var(--aikit-danger); }
+.aikit-badge--info:where(.aikit, .aikit *) { background: var(--aikit-info-soft); color: var(--aikit-info); }
+.aikit-badge--accent:where(.aikit, .aikit *) { background: var(--aikit-accent-soft); color: var(--aikit-accent); }
+
+.aikit-spinner:where(.aikit, .aikit *) {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--aikit-border);
+  border-top-color: var(--aikit-accent);
+  border-radius: 50%;
+  animation: aikit-spin 0.8s linear infinite;
+}
+.aikit-spinner--md:where(.aikit, .aikit *) { width: 28px; height: 28px; border-width: 3px; }
+@keyframes aikit-spin { to { transform: rotate(360deg); } }
+
+.aikit-tabs:where(.aikit, .aikit *) { display: flex; gap: 2px; border-bottom: 1px solid var(--aikit-border); margin: 0; padding: 0; list-style: none; }
+.aikit-tabs__tab:where(.aikit, .aikit *) {
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--aikit-fg-muted);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.aikit-tabs__tab[aria-selected="true"]:where(.aikit, .aikit *) { color: var(--aikit-accent); border-bottom-color: var(--aikit-accent); }
+.aikit-tabs--segment:where(.aikit, .aikit *) { border: 0; gap: 4px; padding: 3px; background: var(--aikit-bg-muted); border-radius: var(--aikit-radius-sm); width: max-content; }
+.aikit-tabs--segment:where(.aikit, .aikit *) .aikit-tabs__tab { margin: 0; border: 0; border-radius: 4px; padding: 5px 12px; }
+.aikit-tabs--segment:where(.aikit, .aikit *) .aikit-tabs__tab[aria-selected="true"] { background: var(--aikit-bg); color: var(--aikit-fg); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+
+.aikit-copy:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.aikit-copy__value:where(.aikit, .aikit *) {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg-soft);
+  font-family: var(--aikit-font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aikit-tooltip:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
+.aikit-tooltip__bubble:where(.aikit, .aikit *) {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--aikit-fg);
+  color: var(--aikit-bg);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 2;
+}
+.aikit-tooltip:hover:where(.aikit, .aikit *) .aikit-tooltip__bubble,
+.aikit-tooltip:focus-within:where(.aikit, .aikit *) .aikit-tooltip__bubble { opacity: 1; }
+
+/* A setting's info button and its bubble (SettingHelp). Fixed, so clipped cards do not cut it. */
+.aikit-row__title:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.aikit-row__title:where(.aikit, .aikit *) > h3 { margin: 0; }
+.aikit-row__note:where(.aikit, .aikit *) { color: var(--aikit-fg-muted); }
+.aikit-help-tip:where(.aikit, .aikit *) { display: inline-flex; flex: 0 0 auto; vertical-align: middle; }
+h3 > .aikit-help-tip:where(.aikit, .aikit *) { margin-left: 4px; }
+.aikit-help-text:where(.aikit, .aikit *) { display: block; margin-top: 2px; color: var(--aikit-fg-muted); }
+.aikit-help-tip__btn:where(.aikit, .aikit *) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aikit-fg-faint);
+  cursor: help;
+}
+.aikit-help-tip__btn:hover:where(.aikit, .aikit *),
+.aikit-help-tip__btn:focus-visible:where(.aikit, .aikit *) { color: var(--aikit-accent); }
+.aikit-help-tip__bubble:where(.aikit, .aikit *) {
+  position: fixed;
+  z-index: calc(var(--aikit-z) + 10);
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-fg);
+  color: var(--aikit-bg);
+  box-shadow: var(--aikit-shadow-pop);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.aikit-help-tip__bubble--open:where(.aikit, .aikit *) { visibility: visible; opacity: 1; }
+
+.aikit-menu:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
+.aikit-menu__list:where(.aikit, .aikit *) {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  box-shadow: var(--aikit-shadow-pop);
+  z-index: 5;
+}
+.aikit-menu__item:where(.aikit, .aikit *) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--aikit-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.aikit-menu__item:hover:where(.aikit, .aikit *),
+.aikit-menu__item:focus-visible:where(.aikit, .aikit *) { background: var(--aikit-bg-soft); box-shadow: none; }
+.aikit-menu__item--danger:where(.aikit, .aikit *) { color: var(--aikit-danger); }
+.aikit-menu__item:disabled:where(.aikit, .aikit *) { opacity: 0.5; cursor: not-allowed; }
+
+.aikit-modal:where(.aikit, .aikit *) { border: 0; padding: 0; border-radius: var(--aikit-radius); box-shadow: var(--aikit-shadow-pop); background: var(--aikit-bg); color: var(--aikit-fg); max-width: calc(100vw - 32px); }
+.aikit-modal:where(.aikit, .aikit *)::backdrop { background: rgba(15, 23, 42, 0.45); }
+.aikit-modal__head:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--aikit-border); font-weight: 600; font-size: 15px; }
+.aikit-modal__body:where(.aikit, .aikit *) { padding: 16px 18px; }
+.aikit-modal__foot:where(.aikit, .aikit *) { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--aikit-border); }
+
+/* --- shared layout helpers ------------------------------------------------ */
+
+.aikit-card:where(.aikit, .aikit *) { border: 1px solid var(--aikit-border); border-radius: var(--aikit-radius); background: var(--aikit-bg); }
+.aikit-card__head:where(.aikit, .aikit *) { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--aikit-border); }
+.aikit-card__head:where(.aikit, .aikit *) h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.aikit-card__head:where(.aikit, .aikit *) small { display: block; margin-top: 2px; color: var(--aikit-fg-muted); }
+.aikit-card__body:where(.aikit, .aikit *) { padding: 16px 18px; }
+.aikit-row:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; }
+.aikit-row:where(.aikit, .aikit *) + .aikit-row { border-top: 1px solid var(--aikit-border); }
+.aikit-row__text:where(.aikit, .aikit *) { min-width: 160px; flex: 1; }
+.aikit-row__text:where(.aikit, .aikit *) small { display: block; color: var(--aikit-fg-muted); margin-top: 2px; }
+.aikit-notice:where(.aikit, .aikit *) { padding: 8px 12px; border-radius: var(--aikit-radius-sm); font-size: 12.5px; }
+.aikit-notice--info:where(.aikit, .aikit *) { background: var(--aikit-info-soft); color: var(--aikit-info); }
+.aikit-notice--warn:where(.aikit, .aikit *) { background: var(--aikit-warning-soft); color: var(--aikit-warning); }
+.aikit-notice--danger:where(.aikit, .aikit *) { background: var(--aikit-danger-soft); color: var(--aikit-danger); }
+.aikit-notice--success:where(.aikit, .aikit *) { background: var(--aikit-success-soft); color: var(--aikit-success); }
+.aikit-empty:where(.aikit, .aikit *) { padding: 24px 0; text-align: center; color: var(--aikit-fg-muted); }
+.aikit-muted:where(.aikit, .aikit *) { color: var(--aikit-fg-muted); }
+.aikit-sr:where(.aikit, .aikit *) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

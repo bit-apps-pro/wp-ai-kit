@@ -1,0 +1,53 @@
+/*
+ * Design tokens. The defaults sit on the document root with no specificity, so
+ * a host's values win wherever it sets them: on its app root (antd hosts spread
+ * `useAntdTheme()` there; Bit Form maps its `--bf-*` scale on `#btcd-app`), on
+ * `.aikit`, or on one component. Portalled panels inherit them too. Light
+ * defaults; a host with dark mode sets the dark values itself
+ * (`.aikit[data-theme="dark"]` is the hook for that).
+ */
+:where(:root) {
+  --aikit-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --aikit-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --aikit-font-size: 13px;
+  --aikit-line: 1.5;
+
+  --aikit-bg: #ffffff;
+  --aikit-bg-soft: #f6f7f9;
+  --aikit-bg-muted: #eef0f3;
+  --aikit-fg: #1f2933;
+  --aikit-fg-muted: #616e7c;
+  --aikit-fg-faint: #9aa5b1;
+  --aikit-border: #e4e7eb;
+  --aikit-border-strong: #cbd2d9;
+
+  --aikit-accent: #3c4b6d;
+  --aikit-accent-fg: #ffffff;
+  --aikit-accent-hover: #2f3b56;
+  --aikit-accent-soft: #eceef3;
+
+  --aikit-success: #1f8a4c;
+  --aikit-success-soft: #e3f5ea;
+  --aikit-warning: #a16207;
+  --aikit-warning-soft: #fef3c7;
+  --aikit-danger: #c0392b;
+  --aikit-danger-soft: #fdecea;
+  --aikit-info: #1d4ed8;
+  --aikit-info-soft: #e8eefc;
+
+  --aikit-radius: 8px;
+  --aikit-radius-sm: 6px;
+  --aikit-radius-pill: 999px;
+  --aikit-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+  --aikit-shadow-pop: 0 10px 30px rgba(15, 23, 42, 0.16);
+  --aikit-z: 99990;
+  --aikit-control-height: 34px;
+}
+
+/*
+ * Tokens built from other tokens are computed on each component, so they follow
+ * the host's values (declared on :root they would freeze the defaults).
+ */
+:where(.aikit) {
+  --aikit-focus: 0 0 0 2px var(--aikit-bg), 0 0 0 4px var(--aikit-accent);
+}

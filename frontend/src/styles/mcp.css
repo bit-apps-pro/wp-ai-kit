@@ -1,0 +1,246 @@
+/*
+ * MCP screen: McpSettings and its cards (ConnectAppGuide, ToolList, ActivityLog,
+ * DiagnosticsList, ApiKeysCard, ConnectionsList, McpSettingsForm). Ported from
+ * the first host's Fela styles; colours only through --aikit-* tokens.
+ */
+
+/* --- page frame -------------------------------------------------------------- */
+
+.aikit-mcp:where(.aikit, .aikit *) { width: 100%; max-width: 1000px; min-width: 0; }
+.aikit-mcp__header:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.aikit-mcp__title-row:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+/* The icon sits inside the heading so it takes the heading's colour. */
+.aikit-mcp__title:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; color: var(--aikit-fg); }
+.aikit-mcp__title-icon:where(.aikit, .aikit *) { flex-shrink: 0; }
+.aikit-mcp__links:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 16px; font-size: 13px; }
+.aikit-mcp__lead:where(.aikit, .aikit *) { margin: 6px 0 12px; max-width: 760px; font-size: 13px; line-height: 1.55; color: var(--aikit-fg-muted); }
+.aikit-mcp__tabs:where(.aikit, .aikit *) { margin-top: 8px; }
+.aikit-mcp__body:where(.aikit, .aikit *) { padding-top: 16px; }
+
+/* Pinned under the WordPress admin bar while there is something to save. */
+.aikit-mcp__save-bar:where(.aikit, .aikit *) {
+  position: sticky;
+  top: calc(var(--wp-admin--admin-bar--height, 32px) + 8px);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--aikit-warning);
+  border-radius: var(--aikit-radius);
+  background: var(--aikit-warning-soft);
+  color: var(--aikit-warning);
+  box-shadow: var(--aikit-shadow);
+  font-weight: 500;
+}
+.aikit-mcp__save-actions:where(.aikit, .aikit *),
+.aikit-mcp__inline-save:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.aikit-mcp__inline-save:where(.aikit, .aikit *) { margin-top: 10px; }
+
+/* --- cards, rows, shared bits ------------------------------------------------ */
+
+.aikit-mcp:where(.aikit, .aikit *) .aikit-card,
+.aikit-connect:where(.aikit, .aikit *),
+.aikit-tools:where(.aikit, .aikit *) .aikit-card,
+.aikit-connections:where(.aikit, .aikit *) .aikit-card,
+.aikit-keys:where(.aikit, .aikit *),
+.aikit-diag:where(.aikit, .aikit *),
+.aikit-activity:where(.aikit, .aikit *),
+.aikit-mcp-form:where(.aikit, .aikit *) .aikit-card { margin-bottom: 16px; overflow: hidden; }
+.aikit-mcp__h3:where(.aikit, .aikit *),
+.aikit-tools__title:where(.aikit, .aikit *) { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--aikit-fg); }
+.aikit-mcp__row:where(.aikit, .aikit *) { padding: 10px 0; }
+.aikit-mcp__row:where(.aikit, .aikit *) + .aikit-mcp__row { border-top: 0; }
+.aikit-mcp__label:where(.aikit, .aikit *) { font-weight: 500; color: var(--aikit-fg); }
+.aikit-mcp:where(.aikit, .aikit *) small,
+.aikit-connect:where(.aikit, .aikit *) small,
+.aikit-tools:where(.aikit, .aikit *) small,
+.aikit-activity:where(.aikit, .aikit *) small,
+.aikit-diag:where(.aikit, .aikit *) small { font-size: 12px; line-height: 1.5; color: var(--aikit-fg-muted); }
+.aikit-mcp__block:where(.aikit, .aikit *),
+.aikit-mcp__sub:where(.aikit, .aikit *) { display: block; margin: 2px 0 8px; }
+.aikit-mcp__code:where(.aikit, .aikit *) { display: block; margin-top: 2px; padding: 0; background: transparent; font-size: 11px; color: var(--aikit-fg-faint); white-space: nowrap; }
+.aikit-mcp__url:where(.aikit, .aikit *) { width: 100%; max-width: 420px; min-width: 220px; flex-shrink: 1; }
+.aikit-mcp__number:where(.aikit, .aikit *) { width: 96px; }
+.aikit-mcp__card-notice:where(.aikit, .aikit *) { margin: 10px 18px 0; }
+.aikit-mcp__foot:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 18px; border-top: 1px solid var(--aikit-border); font-size: 13px; }
+
+/* Disconnect / Revoke: grey at rest so a table of them stays calm, red on hover and focus. */
+.aikit-mcp__quiet-danger:where(.aikit, .aikit *) { color: var(--aikit-fg-muted); border-color: var(--aikit-border); }
+.aikit-mcp__quiet-danger:hover:not(:disabled):where(.aikit, .aikit *),
+.aikit-mcp__quiet-danger:focus-visible:where(.aikit, .aikit *) { color: var(--aikit-danger); border-color: var(--aikit-danger); background: var(--aikit-danger-soft); }
+
+/* --- tables ------------------------------------------------------------------ */
+
+.aikit-mcp-table-wrap:where(.aikit, .aikit *) { overflow-x: auto; }
+.aikit-mcp-table:where(.aikit, .aikit *) { width: 100%; border-collapse: collapse; font-size: 13px; }
+.aikit-mcp-table:where(.aikit, .aikit *) th { padding: 8px 10px; border-bottom: 1px solid var(--aikit-border); background: var(--aikit-bg-soft); text-align: left; font-size: 12px; font-weight: 600; color: var(--aikit-fg-muted); white-space: nowrap; }
+.aikit-mcp-table:where(.aikit, .aikit *) td { padding: 9px 10px; border-top: 1px solid var(--aikit-border); vertical-align: middle; }
+.aikit-mcp-table:where(.aikit, .aikit *) tbody tr:first-child td { border-top: 0; }
+.aikit-mcp-table:where(.aikit, .aikit *) tbody tr:hover { background: var(--aikit-bg-soft); }
+.aikit-mcp-table:where(.aikit, .aikit *) code { padding: 0; background: transparent; font-size: 11px; color: var(--aikit-fg-faint); white-space: nowrap; }
+.aikit-mcp-table__fit:where(.aikit, .aikit *) { width: 1%; white-space: nowrap; }
+.aikit-mcp-table__right:where(.aikit, .aikit *) { text-align: right; white-space: nowrap; }
+
+/* --- connect guide ----------------------------------------------------------- */
+
+.aikit-connect__head:where(.aikit, .aikit *) { flex-direction: column; align-items: flex-start; }
+.aikit-connect__chosen:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 6px; }
+.aikit-connect__stepper:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--aikit-fg-faint); }
+.aikit-connect__step:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 6px; }
+.aikit-connect__step:where(.aikit, .aikit *) + .aikit-connect__step::before { content: ""; width: 24px; height: 1px; margin-right: 4px; background: var(--aikit-border); }
+.aikit-connect__step--active:where(.aikit, .aikit *) { color: var(--aikit-fg); font-weight: 600; }
+.aikit-connect__step-num:where(.aikit, .aikit *) { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--aikit-border); border-radius: 50%; font-size: 12px; }
+.aikit-connect__step--active:where(.aikit, .aikit *) .aikit-connect__step-num { border-color: var(--aikit-accent); background: var(--aikit-accent); color: var(--aikit-accent-fg); }
+.aikit-connect__search:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.aikit-connect__search-input:where(.aikit, .aikit *) { width: auto; min-width: 140px; max-width: 240px; }
+.aikit-connect__tiles:where(.aikit, .aikit *) { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 10px; }
+.aikit-connect__tile:where(.aikit, .aikit *) {
+  justify-content: flex-start;
+  gap: 12px;
+  height: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  text-align: left;
+  white-space: normal;
+  transition: border-color 0.2s;
+}
+.aikit-connect__tile:hover:not(:disabled):where(.aikit, .aikit *) { border-color: var(--aikit-accent); background: var(--aikit-bg); }
+/* The app's logo in its own soft square, so marks of different shapes and colours sit evenly. */
+.aikit-connect__tile-logo:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: var(--aikit-radius-sm); background: var(--aikit-bg-soft); color: var(--aikit-fg); }
+.aikit-connect__tile-text:where(.aikit, .aikit *) { display: flex; flex-direction: column; min-width: 0; }
+.aikit-connect__tile-text:where(.aikit, .aikit *) strong { font-size: 14px; color: var(--aikit-fg); }
+.aikit-connect__tile-text:where(.aikit, .aikit *) small { font-weight: 400; }
+.aikit-connect__tab:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 6px; }
+.aikit-connect__tab-body:where(.aikit, .aikit *) { margin-top: 14px; }
+.aikit-connect__actions:where(.aikit, .aikit *) { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.aikit-connect__guide:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 8px; }
+.aikit-connect__notice:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
+.aikit-connect__one-click:where(.aikit, .aikit *) { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 4px; }
+.aikit-connect__deep-link:where(.aikit, .aikit *) {
+  display: inline-flex;
+  align-items: center;
+  height: var(--aikit-control-height);
+  padding: 0 16px;
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-accent);
+  color: var(--aikit-accent-fg);
+  font-weight: 500;
+  text-decoration: none;
+}
+.aikit-connect__deep-link:hover:where(.aikit, .aikit *) { background: var(--aikit-accent-hover); color: var(--aikit-accent-fg); }
+.aikit-connect__manual:where(.aikit, .aikit *) { display: block; margin-top: 4px; font-size: 13px; color: var(--aikit-fg); }
+.aikit-connect__steps:where(.aikit, .aikit *) { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: var(--aikit-fg); }
+.aikit-connect__url:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 4px; }
+.aikit-connect__snippet:where(.aikit, .aikit *) {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-fg);
+  color: var(--aikit-bg);
+  font-family: var(--aikit-font-mono);
+  font-size: 12px;
+  white-space: pre;
+}
+
+/* --- tools ------------------------------------------------------------------- */
+
+/* Access levels as three cards in a row, the chosen one outlined. */
+.aikit-tools__levels:where(.aikit, .aikit *) { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 12px; }
+.aikit-tools__level:where(.aikit, .aikit *) {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
+}
+.aikit-tools__level:hover:where(.aikit, .aikit *) { border-color: var(--aikit-border-strong); }
+.aikit-tools__level--active:where(.aikit, .aikit *),
+.aikit-tools__level--active:hover:where(.aikit, .aikit *) { border-color: var(--aikit-accent); background: var(--aikit-accent-soft); box-shadow: 0 0 0 3px var(--aikit-accent-soft); }
+.aikit-tools__level:where(.aikit, .aikit *) input { flex-shrink: 0; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--aikit-accent); }
+.aikit-tools__level:where(.aikit, .aikit *) strong { display: block; font-weight: 600; color: var(--aikit-fg); }
+.aikit-tools__level:where(.aikit, .aikit *) small { display: block; }
+.aikit-tools__toolbar:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--aikit-border); }
+.aikit-tools__toolbar:where(.aikit, .aikit *) .aikit-tools__title { margin: 0 auto 0 0; }
+.aikit-tools__search:where(.aikit, .aikit *) { width: auto; min-width: 140px; max-width: 240px; }
+.aikit-tools__filters:where(.aikit, .aikit *) { padding: 12px 18px 4px; }
+.aikit-tools__name:where(.aikit, .aikit *) { font-size: 13px; font-weight: 500; color: var(--aikit-fg); }
+.aikit-tools__badges:where(.aikit, .aikit *) { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
+.aikit-tools__text:where(.aikit, .aikit *) { display: block; max-width: 720px; margin-top: 2px; }
+
+/* --- activity ---------------------------------------------------------------- */
+
+.aikit-activity__count:where(.aikit, .aikit *) { margin-left: 8px; padding: 1px 8px; border-radius: var(--aikit-radius-pill); background: var(--aikit-bg-muted); color: var(--aikit-fg-muted); font-size: 12px; font-weight: 500; }
+.aikit-activity__toolbar:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 52px; padding: 10px 18px; border-bottom: 1px solid var(--aikit-border); }
+.aikit-activity__toolbar-end:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--aikit-fg-muted); }
+.aikit-activity__filters:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
+.aikit-activity__filter-count:where(.aikit, .aikit *) { min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--aikit-radius-pill); background: var(--aikit-accent-fg); color: var(--aikit-accent); font-size: 11px; line-height: 18px; text-align: center; }
+.aikit-activity__chip:where(.aikit, .aikit *) { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: var(--aikit-radius-pill); background: var(--aikit-accent-soft); color: var(--aikit-accent); font-size: 12px; }
+.aikit-activity__chip:where(.aikit, .aikit *) .aikit-btn { width: 20px; height: 20px; color: inherit; }
+.aikit-activity__panel:where(.aikit, .aikit *) {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 5;
+  width: 440px;
+  max-width: 90vw;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  box-shadow: var(--aikit-shadow-pop);
+}
+.aikit-activity__panel-grid:where(.aikit, .aikit *) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 12px; }
+.aikit-activity__panel-foot:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--aikit-border); }
+.aikit-activity__panel-foot:where(.aikit, .aikit *) small { font-size: 11px; }
+.aikit-activity__field:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.aikit-activity__field:where(.aikit, .aikit *) > span { font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--aikit-fg-muted); }
+/* A row value that filters the list when clicked. */
+.aikit-activity__cell-filter:where(.aikit, .aikit *) { height: auto; padding: 0; border: 0; background: transparent; color: inherit; font-weight: inherit; text-align: left; white-space: normal; }
+.aikit-activity__cell-filter:hover:not(:disabled):where(.aikit, .aikit *) { background: transparent; color: var(--aikit-accent); text-decoration: underline dotted; }
+.aikit-activity__tool:where(.aikit, .aikit *) { font-weight: 500; color: var(--aikit-fg); }
+.aikit-activity__code:where(.aikit, .aikit *) { display: block; }
+.aikit-activity__hint:where(.aikit, .aikit *) { display: block; margin-top: 4px; }
+.aikit-activity__pager:where(.aikit, .aikit *) { display: inline-flex; gap: 8px; }
+.aikit-activity__error:where(.aikit, .aikit *) { margin: 10px 18px; }
+.aikit-activity__recent:where(.aikit, .aikit *) { margin: 0; padding: 4px 18px; list-style: none; }
+.aikit-activity__recent:where(.aikit, .aikit *) li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--aikit-border); font-size: 13px; }
+.aikit-activity__recent:where(.aikit, .aikit *) li:first-child { border-top: 0; }
+.aikit-activity__recent:where(.aikit, .aikit *) code { padding: 0; background: transparent; font-size: 12px; font-weight: 500; color: var(--aikit-fg); }
+.aikit-activity__when:where(.aikit, .aikit *) { margin-left: auto; white-space: nowrap; }
+
+/* --- diagnostics ------------------------------------------------------------- */
+
+.aikit-diag__list:where(.aikit, .aikit *) { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.aikit-diag__check:where(.aikit, .aikit *) { display: flex; align-items: flex-start; gap: 10px; }
+.aikit-diag__check:where(.aikit, .aikit *) small { display: block; }
+.aikit-diag__status:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--aikit-fg-faint); color: var(--aikit-bg); font-size: 12px; font-weight: 700; }
+.aikit-diag__status--pass:where(.aikit, .aikit *) { background: var(--aikit-success); }
+.aikit-diag__status--warn:where(.aikit, .aikit *) { background: var(--aikit-warning); }
+.aikit-diag__status--info:where(.aikit, .aikit *) { background: var(--aikit-info); }
+.aikit-diag__status--fail:where(.aikit, .aikit *) { background: var(--aikit-danger); }
+
+/* --- API keys ---------------------------------------------------------------- */
+
+.aikit-keys__manage:where(.aikit, .aikit *) { margin-top: 8px; }
+.aikit-keys__form:where(.aikit, .aikit *) { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--aikit-border); }
+.aikit-keys__form:where(.aikit, .aikit *) .aikit-select { width: auto; min-width: 140px; max-width: 240px; }
+.aikit-keys__name:where(.aikit, .aikit *) { width: auto; min-width: 140px; max-width: 240px; }
+.aikit-keys__reveal:where(.aikit, .aikit *) { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 10px 0; }
+.aikit-keys__reveal:where(.aikit, .aikit *) .aikit-copy { width: 100%; }
+
+/* --- narrow screens ---------------------------------------------------------- */
+
+@media (max-width: 600px) {
+  .aikit-activity__panel-grid:where(.aikit, .aikit *) { grid-template-columns: minmax(0, 1fr); }
+  .aikit-mcp__url:where(.aikit, .aikit *) { min-width: 0; max-width: none; }
+}

@@ -1,0 +1,294 @@
+/*
+ * The chat: panel container, launcher pill, header, bubbles, pending-action
+ * card, composer with its @ and / menu, empty state, errors. Root elements carry
+ * `aikit` themselves, so the compound `:where(.aikit).aikit-x` styles them at the
+ * same (0,1,0) specificity as every other rule here.
+ */
+
+/* --- panel ------------------------------------------------------------------ */
+
+:where(.aikit).aikit-panel {
+  position: fixed;
+  z-index: var(--aikit-z);
+  display: flex;
+  flex-direction: column;
+  background: var(--aikit-bg);
+  color: var(--aikit-fg);
+  border: 1px solid var(--aikit-border);
+  box-shadow: var(--aikit-shadow-pop);
+  outline: none;
+  animation: aikit-panel-in 0.2s ease;
+}
+:where(.aikit).aikit-panel--compact {
+  right: 24px;
+  bottom: 24px;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  height: min(620px, calc(100vh - 120px));
+  border-radius: var(--aikit-radius);
+}
+:where(.aikit).aikit-panel--full {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 400px;
+  max-width: 100vw;
+  border-width: 0 0 0 1px;
+  border-radius: 0;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.06);
+}
+@keyframes aikit-panel-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.aikit-panel__head:where(.aikit, .aikit *) { flex: 0 0 auto; border-bottom: 1px solid var(--aikit-border); }
+.aikit-panel__body:where(.aikit, .aikit *) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.aikit-panel__foot:where(.aikit, .aikit *) { flex: 0 0 auto; border-top: 1px solid var(--aikit-border); }
+/* A chat filling a panel owns the whole box: the panel adds no second border. */
+.aikit-panel__body:where(.aikit, .aikit *) > .aikit-chat { flex: 1 1 auto; min-height: 0; }
+
+/* --- launcher --------------------------------------------------------------- */
+
+:where(.aikit).aikit-launcher {
+  position: fixed;
+  bottom: 24px;
+  z-index: var(--aikit-z);
+}
+:where(.aikit).aikit-launcher--bottom-right { right: 24px; }
+:where(.aikit).aikit-launcher--bottom-left { left: 24px; }
+.aikit-launcher__btn:where(.aikit, .aikit *) {
+  position: relative;
+  height: auto;
+  padding: 10px 16px;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--aikit-radius-pill);
+  background: var(--aikit-accent);
+  color: var(--aikit-accent-fg);
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--aikit-accent) 35%, transparent);
+}
+.aikit-launcher__btn:hover:not(:disabled):where(.aikit, .aikit *) { background: var(--aikit-accent-hover); }
+.aikit-launcher__dot:where(.aikit, .aikit *) {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--aikit-danger);
+  box-shadow: 0 0 0 2px var(--aikit-accent);
+}
+
+/* --- chat layout ------------------------------------------------------------ */
+
+:where(.aikit).aikit-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--aikit-bg);
+  color: var(--aikit-fg);
+}
+.aikit-chat__head:where(.aikit, .aikit *) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--aikit-border);
+}
+.aikit-chat__heading:where(.aikit, .aikit *) { min-width: 0; flex: 1; }
+.aikit-chat__title:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.aikit-chat__title-icon:where(.aikit, .aikit *) { flex: 0 0 auto; color: var(--aikit-accent); }
+.aikit-chat__subtitle:where(.aikit, .aikit *) { display: block; font-size: 12px; color: var(--aikit-fg-muted); }
+.aikit-chat__head-actions:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.aikit-chat__history-anchor:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
+.aikit-chat__head-actions:where(.aikit, .aikit *) .aikit-btn[aria-pressed="true"] { background: var(--aikit-accent-soft); color: var(--aikit-accent); }
+
+.aikit-chat__body:where(.aikit, .aikit *) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.aikit-chat__foot:where(.aikit, .aikit *) { flex: 0 0 auto; padding: 12px 16px; border-top: 1px solid var(--aikit-border); }
+.aikit-chat__note:where(.aikit, .aikit *) { margin-top: 6px; font-size: 11px; color: var(--aikit-fg-faint); }
+.aikit-chat__preview-bar:where(.aikit, .aikit *) { margin-bottom: 10px; }
+.aikit-chat__preview-bar:empty:where(.aikit, .aikit *) { display: none; }
+
+/* --- bubbles ---------------------------------------------------------------- */
+
+.aikit-chat__message:where(.aikit, .aikit *) { display: flex; flex-direction: column; }
+.aikit-chat__message--user:where(.aikit, .aikit *) { align-items: flex-end; }
+.aikit-chat__message--assistant:where(.aikit, .aikit *) { align-items: flex-start; }
+.aikit-chat__bubble:where(.aikit, .aikit *) {
+  max-width: 88%;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+.aikit-chat__bubble--user:where(.aikit, .aikit *) {
+  border-radius: 12px 12px 2px 12px;
+  background: var(--aikit-accent-soft);
+  color: var(--aikit-fg);
+}
+.aikit-chat__bubble--assistant:where(.aikit, .aikit *) {
+  border-radius: 12px 12px 12px 2px;
+  background: var(--aikit-bg-soft);
+  color: var(--aikit-fg);
+}
+.aikit-chat__bubble--optimistic:where(.aikit, .aikit *) { opacity: 0.75; }
+.aikit-chat__text:where(.aikit, .aikit *) { white-space: pre-wrap; }
+.aikit-chat__bubble:where(.aikit, .aikit *) .aikit-markdown p { margin: 0 0 6px; }
+.aikit-chat__bubble:where(.aikit, .aikit *) .aikit-markdown p:last-child { margin-bottom: 0; }
+.aikit-chat__bubble:where(.aikit, .aikit *) .aikit-markdown ul,
+.aikit-chat__bubble:where(.aikit, .aikit *) .aikit-markdown ol { margin: 0 0 6px; padding-left: 18px; }
+.aikit-chat__bubble:where(.aikit, .aikit *) code { font-size: 12px; }
+.aikit-chat__tools:where(.aikit, .aikit *) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
+
+/* --- pending action --------------------------------------------------------- */
+
+.aikit-pending:where(.aikit, .aikit *) {
+  padding: 12px;
+  border: 1px solid var(--aikit-warning);
+  border-radius: var(--aikit-radius);
+  background: var(--aikit-warning-soft);
+  font-size: 13px;
+}
+.aikit-pending--destructive:where(.aikit, .aikit *) { border-color: var(--aikit-danger); background: var(--aikit-danger-soft); }
+.aikit-pending__title:where(.aikit, .aikit *) { font-weight: 600; margin-bottom: 4px; }
+.aikit-pending__args:where(.aikit, .aikit *) { margin: 8px 0; padding: 0; list-style: none; font-size: 12px; color: var(--aikit-fg-muted); }
+.aikit-pending__args:where(.aikit, .aikit *) li { padding: 2px 0; overflow-wrap: anywhere; }
+.aikit-pending__note:where(.aikit, .aikit *) { margin-top: 4px; }
+.aikit-pending__actions:where(.aikit, .aikit *) { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+/* --- empty state, error ----------------------------------------------------- */
+
+.aikit-chat__empty:where(.aikit, .aikit *) { margin: auto; max-width: 300px; text-align: center; color: var(--aikit-fg-muted); font-size: 13px; }
+.aikit-chat__empty:where(.aikit, .aikit *) p { margin: 0; }
+.aikit-chat__suggestions:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.aikit-chat__suggestion:where(.aikit, .aikit *) {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg);
+  color: var(--aikit-fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.aikit-chat__suggestion:hover:not(:disabled):where(.aikit, .aikit *) { border-color: var(--aikit-accent); color: var(--aikit-accent); }
+.aikit-chat__suggestion:disabled:where(.aikit, .aikit *) { opacity: 0.55; cursor: default; }
+.aikit-chat__error:where(.aikit, .aikit *) {
+  padding: 10px 12px;
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-danger-soft);
+  color: var(--aikit-danger);
+  font-size: 13px;
+}
+.aikit-chat__error:where(.aikit, .aikit *) a { color: inherit; font-weight: 500; }
+
+/* --- composer --------------------------------------------------------------- */
+
+.aikit-composer:where(.aikit, .aikit *) { position: relative; }
+.aikit-composer__box:where(.aikit, .aikit *) {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius);
+  background: var(--aikit-bg);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.aikit-composer__box:focus-within:where(.aikit, .aikit *) {
+  border-color: var(--aikit-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--aikit-accent) 12%, transparent);
+}
+.aikit-composer__box--disabled:where(.aikit, .aikit *) { background: var(--aikit-bg-soft); }
+
+/* The drag handle on the top edge (a short bar shows it on hover). */
+.aikit-composer__grip:where(.aikit, .aikit *) {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 1;
+}
+.aikit-composer__grip:where(.aikit, .aikit *)::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 4px;
+  background: var(--aikit-border-strong);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.aikit-composer__grip:hover:where(.aikit, .aikit *)::after { opacity: 1; }
+.aikit-composer__grip:focus-visible:where(.aikit, .aikit *) { box-shadow: none; }
+.aikit-composer__grip:focus-visible:where(.aikit, .aikit *)::after { opacity: 1; background: var(--aikit-accent); }
+
+.aikit-composer__input:where(.aikit, .aikit *) {
+  width: 100%;
+  padding: 10px 12px 0;
+  border: 0;
+  background: transparent;
+  resize: none;
+  outline: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--aikit-fg);
+}
+.aikit-composer__input:focus:where(.aikit, .aikit *) { outline: none; box-shadow: none; }
+.aikit-composer__input:where(.aikit, .aikit *)::placeholder { color: var(--aikit-fg-faint); }
+.aikit-composer__input:disabled:where(.aikit, .aikit *) { cursor: not-allowed; color: var(--aikit-fg-muted); }
+.aikit-composer__bar:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px 12px; }
+.aikit-composer__hint:where(.aikit, .aikit *) { font-size: 11px; color: var(--aikit-fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aikit-composer__send:where(.aikit, .aikit *) { width: 30px; height: 30px; border-radius: 50%; }
+.aikit-composer__send:disabled:where(.aikit, .aikit *) { opacity: 0.35; }
+
+.aikit-composer__menu:where(.aikit, .aikit *) {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 2;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius);
+  background: var(--aikit-bg);
+  box-shadow: var(--aikit-shadow-pop);
+}
+.aikit-composer__menu-head:where(.aikit, .aikit *) { padding: 6px 8px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--aikit-fg-faint); }
+.aikit-composer__menu-empty:where(.aikit, .aikit *) { padding: 8px; font-size: 12px; color: var(--aikit-fg-muted); }
+.aikit-composer__menu-row:where(.aikit, .aikit *) {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--aikit-radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+}
+.aikit-composer__menu-row--active:where(.aikit, .aikit *) { background: var(--aikit-accent-soft); }
+.aikit-composer__menu-label:where(.aikit, .aikit *) { max-width: 60%; font-weight: 500; color: var(--aikit-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aikit-composer__menu-hint:where(.aikit, .aikit *) { font-size: 12px; color: var(--aikit-fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
