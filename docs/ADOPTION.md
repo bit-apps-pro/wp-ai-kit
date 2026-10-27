@@ -73,7 +73,12 @@ visitor-written text with `Security\UntrustedContent::wrap()`.
   your `color` first), and the button text turns black or white to stay readable
   on the accent.
 - A settings screen reads `Kit::adminState()` and saves through
-  `Kit::saveMcpSettings($input)`; the kit validates every key.
+  `Kit::saveMcpSettings($input)`; the kit validates every key. With the context
+  feature `rest_ui` the kit serves all of this over REST (`<ns>/ai/*`, README
+  "Admin REST routes") and the plugin writes no controllers: it localizes
+  `Kit::uiBootstrap()` for its UI and hooks `chatContextHook` / `chatViewHook`
+  for what is its own (Bit Form: `Providers\AiProvider::chatContext()` and
+  `chatView()`).
 - On WordPress 6.9+ the tools are mirrored as abilities (category
   `bitapps-<slug>`), and on sites with the MCP Adapter plugin they also appear on
   the server `bitapps-<slug>` at `<rest_namespace>/mcp-adapter`.
@@ -90,13 +95,53 @@ from `<prefix>ai_settings`; destructive tools return a `pending` action the user
 `services.assistant_persona` for plugin-specific guidance. Bit CRM can replace its `AgentLoop`,
 `ToolDispatcher` and providers with this; streaming (SSE) is not in the kit yet.
 
+### Storage
+
+Pass `'storage' => PluginContext::STORAGE_TABLES` for real chat history and a searchable activity log in the
+kit's own tables; call `Kit::for($slug)->installTables()` on activation, `deactivate()` on deactivation and
+`uninstallTables()` on uninstall (README, "Tables"). Only the tables for the parts the plugin ships are
+created. Leave it at `options` (the default) for a small footprint: one conversation per user and the last
+200 log events. A plugin that already has tables passes them as the `conversations` / `audit` services.
+
+### Leaving parts out
+
+List what the plugin does not ship in `features` (README, "Choosing features"): `audit` (no activity log),
+`history` (no earlier-chats list), `oauth`, `api_keys`, `abilities`, `mcp_adapter`. Nothing else is needed:
+the kit registers no hooks or routes for them and the UI package hides them. Use the runtime switches
+(settings, constants, `bitapps_ai_feature_disabled`) only for parts a site owner should be able to turn off.
+
+### Admin UI (`@bitapps/wp-ai-kit-ui`)
+
+1. Boot with `PluginContext::FEATURE_REST_UI => true` and localize `Kit::uiBootstrap()` under the plugin's
+   script variable (Bit Form: `window.bits.aiKit`).
+2. `pnpm add @bitapps/wp-ai-kit-ui` (peer: React 18.3+ or 19; antd 5 only for the adapter). With a linked
+   checkout during development, add `resolve: { dedupe: ['react', 'react-dom'] }` to the Vite config.
+3. Wrap the AI screens in `<AiKitProvider bootstrap={…} i18n={{ __ }}>`:
+   - **antd plugin (Bit CRM, Bit PI, Bit Connect):** `components={antdComponents}` from
+     `@bitapps/wp-ai-kit-ui/antd`, and spread `useAntdTheme()` on the root element's `style`.
+   - **Own design system (Bit Form):** a partial slot map (Button, Switch, Badge, …); unmapped slots keep the
+     plain defaults. Theme with `--aikit-*` tokens on the app root.
+4. Mount the parts in the plugin's own containers: `AssistantChat` in a dock, drawer or floating `Panel`;
+   `AssistantSettingsForm` and `McpSettings` on settings pages (route-driven tabs through `tab` /
+   `onTabChange`).
+5. Keep the components out of the plugin's main bundle: import them only from lazily loaded screens
+   (`/components` is about 33 kB brotli). One store can be shared between lazy chunks (`AiKitProvider`'s
+   `store` prop) so saving settings updates an open chat.
+6. Merge `node_modules/@bitapps/wp-ai-kit-ui/i18n/strings.en.json` into the plugin's translation template.
+7. Add what is the plugin's through props and hooks, never forks: `context`, `mentions`, `commands`,
+   `renderPreviewBar`, `onEvent` in the chat; `chatContextHook` / `chatViewHook` on the server.
+
 ### Reference: Bit Form
 
-`bitform/backend/app/Providers/AiProvider.php` (boot, context, provider filter),
-`backend/app/Ai/Tools/*` (providers over the ORM models),
-`backend/app/Http/Controller/AiMcpController.php` (settings endpoints). Bit Form
-Pro adds tools through Free's own `bitform_ai_tool_providers` filter and Free's
-`Ai\ToolProvider` facade, so it never names the kit's prefixed classes.
+- `bitform/backend/app/Providers/AiProvider.php`: boot, context, the provider filter, `chatContext()`,
+  `chatView()`, `uiBootstrap()`.
+- `backend/app/Ai/Tools/*`: providers over the ORM models.
+- `backend/app/Ai/{AuditLogger,ConversationRepository}.php`: table-backed services.
+- `frontend-dev/src/components/AiKit/*`: provider, slot map and token bridge.
+- `frontend-dev/src/components/AiAssistant/AssistantPanel.tsx`: the docked chat with the builder preview.
+
+Bit Form Pro adds tools through Free's own `bitform_ai_tool_providers` filter and Free's `Ai\ToolProvider`
+facade, so it never names the kit's prefixed classes.
 
 ## 5. Migration paths
 
@@ -145,8 +190,12 @@ providers, streaming and agent loop move into the kit's `Ai\*`; `SystemPrompt`,
 - [ ] Tool providers on `bitapps_ai_tool_providers_<slug>`: model-readable descriptions, honest
       `readonly` / `destructive` annotations, `personal_data` where entries are returned, a
       `resource_check` where a user may reach only some records.
-- [ ] Settings screens on `adminState()` / `saveMcpSettings()` and `assistantState()` / `saveAiSettings()`,
-      behind the plugin's capability check.
+- [ ] `features` lists what the plugin does not ship (activity log, history, OAuth, API keys, bridges).
+- [ ] Settings screens: `@bitapps/wp-ai-kit-ui` over `rest_ui`, or the plugin's own on `adminState()` /
+      `saveMcpSettings()` and `assistantState()` / `saveAiSettings()`, behind the plugin's capability check.
+- [ ] `can_use` is a staff capability, never subscribers; `manage_cap` is the site administrators'.
+- [ ] `storage` chosen; with `tables`, `installTables()` / `deactivate()` / `uninstallTables()` wired to
+      activation, deactivation and uninstall.
 - [ ] Uninstall deletes the kit's options and user meta (README, "What the kit stores").
 - [ ] Privacy: the plugin's privacy exporters/erasers cover conversations and the audit log if it keeps them.
 - [ ] Tested with an Application Password (`curl … tools/list`) and one OAuth app (Claude.ai or ChatGPT).

@@ -19,11 +19,16 @@ the kit provides everything around them:
   additional server, and the core AI Client (7.0+) as the assistant engine — with
   built-in Anthropic Claude, OpenAI and Google Gemini engines as fallback;
 - an in-admin AI assistant (agent loop, conversation history, per-call confirmation)
-  that runs the same tools.
+  that runs the same tools;
+- optional admin REST routes and a React UI package, `@bitapps/wp-ai-kit-ui`
+  (`frontend/`), with the chat panel, conversation history and the AI Assistant and
+  MCP Server settings screens, themeable and with slots for the host's own components.
 
-Requirements: PHP ≥ 8.0, WordPress functions available at runtime. **No Composer
-dependencies.** Not a plugin: it is a library a plugin requires and prefixes. The kit
-has no admin UI; the plugin builds its settings screens on the kit's PHP API.
+Requirements: PHP ≥ 8.0, WordPress functions available at runtime. **One Composer
+dependency:** `bitapps/wp-database` (^2.0), the Bit Apps ORM every Bit plugin already ships, used only for
+the optional tables. Not a plugin: it is a library a plugin requires and prefixes. The admin
+UI is optional: mount the components from `@bitapps/wp-ai-kit-ui` (see
+`frontend/README.md`), or build your own screens on the kit's PHP API.
 
 ## Install (in a plugin)
 
@@ -130,9 +135,9 @@ consent screen on the site and the user approves it there.
 
 ## Settings screens
 
-The plugin owns the UI; the kit owns validation and storage. Call these on
-`$kit = Kit::for('bitform')` from the plugin's own admin endpoints, which check the
-user's capability first:
+The kit owns validation and storage. With `rest_ui` and `@bitapps/wp-ai-kit-ui` the plugin writes no
+endpoints ("Admin REST routes" below). A plugin with its own UI calls these on
+`$kit = Kit::for('bitform')` from its own admin endpoints, which check the user's capability first:
 
 | Screen         | Read                                                                            | Save / act                                                        |
 | -------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -160,12 +165,14 @@ Required `PluginContext::create()` keys: `slug`, `name`, `version`, `option_pref
 | `instructions`                        | What the MCP server tells clients about the tools.                                               |
 | `description`, `website_url`, `icons` | How MCP clients show the server (below).                                                         |
 | `features`                            | Which parts the plugin ships (below).                                                            |
+| `storage`                             | `options` (default) or `tables`: where conversations and the activity log live ("What the kit stores"). |
+| `manage_cap`                          | Capability for saving settings and touching other users' keys and connections. Default `manage_options`. |
 | `services`                            | Plugin-supplied pieces, all optional (below).                                                    |
 
 | Service             | Purpose                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------ |
-| `audit`             | `Audit\AuditLoggerInterface`; default keeps the last events in an option.            |
-| `conversations`     | `Ai\ConversationRepositoryInterface`; default: user meta, one conversation per user. |
+| `audit`             | `Audit\AuditLoggerInterface`; default: the kit's table with `storage => tables`, else the last 200 events in an option. |
+| `conversations`     | `Ai\ConversationRepositoryInterface`; default: the kit's table with `storage => tables`, else one conversation per user in user meta. |
 | `oauth_storage`     | `Mcp\OAuth\OAuthStorageInterface`; default: two options.                             |
 | `pii_classifier`    | `callable` that marks fields as personal data for masking.                           |
 | `brand`             | Consent screen colours: `color`, `background`, `color_dark`, `background_dark`.      |
@@ -194,17 +201,65 @@ PluginContext::create([
 ]);
 ```
 
-### Shipping only part of the kit
+### Choosing features
 
-A plugin that wants only the assistant, or only the MCP server, says so at boot. A left-out feature registers
-no hooks, loads none of its classes and cannot be switched on by settings:
+`features` says what the plugin **ships**. Everything is on unless listed as false, except `rest_ui`. A part
+left out registers no hooks or REST routes, loads none of its classes, cannot be switched on by saved
+settings, and the UI package hides it. No UI is needed to leave something out:
 
 ```php
 PluginContext::create([
     // …
-    'features' => [PluginContext::FEATURE_MCP => false],   // assistant only
+    'features' => [
+        PluginContext::FEATURE_REST_UI => true,   // the kit's admin REST routes (off by default)
+        PluginContext::FEATURE_AUDIT   => false,  // no activity log at all
+        PluginContext::FEATURE_OAUTH   => false,  // MCP apps sign in with API keys or Application Passwords only
+    ],
 ]);
 ```
+
+| Key | Default | What it ships |
+| --- | --- | --- |
+| `FEATURE_MCP` (`mcp`) | on | the MCP server, its settings and screens |
+| `FEATURE_ASSISTANT` (`assistant`) | on | the in-admin assistant, its settings and screens |
+| `FEATURE_REST_UI` (`rest_ui`) | **off** | the admin REST routes `<ns>/ai/*` for `@bitapps/wp-ai-kit-ui` |
+| `FEATURE_AUDIT` (`audit`) | on | the activity log: recording, its routes, the Activity tab and recent-activity cards, retention |
+| `FEATURE_HISTORY` (`history`) | on | earlier chats: the history list, open, rename, pin, archive, delete (the current chat stays) |
+| `FEATURE_OAUTH` (`oauth`) | on | OAuth sign-in for MCP apps, connected apps; OAuth-only apps leave the connect guide |
+| `FEATURE_API_KEYS` (`api_keys`) | on | kit-issued MCP API keys |
+| `FEATURE_ABILITIES` (`abilities`) | on | offering the tools as WordPress abilities (WordPress 6.9+) |
+| `FEATURE_MCP_ADAPTER` (`mcp_adapter`) | on | listing the tools on the WordPress MCP Adapter plugin's server |
+
+A shipped part can still be switched off at run time, without code in the plugin:
+
+- the saved settings (the screens' switches);
+- the constants `<PREFIX>_MCP_DISABLED` / `<PREFIX>_AI_DISABLED` in `wp-config.php`
+  (`BITFORMS_MCP_DISABLED`); the AI constant covers the assistant and the activity log;
+- the filter `bitapps_ai_feature_disabled`, `(bool $disabled, string $feature, string $slug)`, with
+  `$feature` one of `mcp_server`, `oauth`, `api_keys`, `adapter_bridge`, `abilities_bridge`, `assistant`, `audit`.
+
+## Admin REST routes (opt-in)
+
+With `'features' => [PluginContext::FEATURE_REST_UI => true]` the kit registers `<rest_namespace>/ai/*`
+for the chat panel and the settings screens, so the plugin writes no controllers:
+
+| Route | What |
+| --- | --- |
+| `GET assistant/view`, `POST assistant/chat`, `POST assistant/decide`, `POST assistant/reset` | The chat panel; a failed turn answers 422 with the conversation view (`error`, `reason`) |
+| `GET assistant/history?search&limit&offset&archived`, `POST assistant/conversations/{id}/open`, `PATCH …/{id}` (`title`, `pinned`, `archived`), `DELETE …/{id}` (or `all`) | Conversation history |
+| `GET/POST settings/assistant`, `GET/POST settings/mcp` | The settings screens (save as the form posts, flat or under `settings`) |
+| `GET mcp/state`, `GET/DELETE mcp/activity`, `GET/POST mcp/api-keys`, `DELETE mcp/api-keys/{id}`, `GET/DELETE mcp/connections[/{id}]` | The MCP screen |
+
+Authentication is WordPress's cookie session with an `X-WP-Nonce` (`wp_rest`) header. Every route needs
+the plugin's `can_use`; saving settings, clearing the log and other users' keys or connections need
+`manage_cap` (`manage_options` by default). `Kit::uiBootstrap()` gives the UI the REST base, the nonce and
+what the user may do; localize it under the plugin's own script variable.
+
+What is the plugin's, the plugin adds through hooks (names from `Contract`): `chatContextHook` turns the
+browser's `context` (ids such as the screen and record the user is on) into the sentence the system prompt
+gets and the `about` stored with a new conversation — nothing the browser sent reaches the model otherwise;
+`chatViewHook` adds to every reply (Bit Form puts its builder preview there); `conversationSwitchHook` fires
+before reset/open/forget; `settingsSavedHook` after a save.
 
 ## Hooks
 
@@ -213,13 +268,19 @@ PluginContext::create([
 | `bitapps_ai_tool_providers_<slug>` | filter | Add tool providers (`$providers`, `PluginContext`).                             |
 | `bitapps_ai_kit_booted_<slug>`     | action | Runs once the kit has booted, with the `Kit`.                                   |
 | `bitapps_ai_feature_disabled`      | filter | `(bool $disabled, string $feature, string $slug)`: a host forces a feature off. |
+| `bitapps_ai_chat_context_<slug>`   | filter | `(array $context, int $userId, WP_REST_Request)`: set `summary` and `about` from the browser's `input`. |
+| `bitapps_ai_chat_view_<slug>`      | filter | `(array $view, int $userId, WP_REST_Request)`: add to every chat reply (a preview, say). |
+| `bitapps_ai_conversation_switch_<slug>` | action | `(int $userId, string $event, ?string $id)` before reset, open or forget. |
+| `bitapps_ai_settings_saved_<slug>` | action | `(string $which, array $settings)` after a save through the kit. |
+| `bitapps_ai_ui_bootstrap_<slug>`   | filter | `(array $bootstrap)`: what `Kit::uiBootstrap()` hands the UI. |
+| `bitapps_ai_rest_permission_<slug>` | filter | `(bool\|WP_Error $allowed, string $route, WP_REST_Request, string $level)` on every kit REST route for a signed-in user (`$level`: `use` or `manage`). |
 | `bitapps_ai_secret_keys`           | filter | Extra key names to redact from tool output.                                     |
 | `bitapps_ai_allowed_origins`       | filter | Browser origins allowed to call the MCP endpoint.                               |
 | `bitapps_ai_client_ip`             | filter | The client IP for rate limits behind a proxy or CDN.                            |
 
-Hosts can also force features off in `wp-config.php` with `<PREFIX>MCP_DISABLED` /
-`<PREFIX>AI_DISABLED`, where the prefix is the upper-cased option prefix
-(`BITFORMS_MCP_DISABLED`).
+Hosts can also force features off in `wp-config.php` with `<PREFIX>_MCP_DISABLED` /
+`<PREFIX>_AI_DISABLED`, where the prefix is the upper-cased option prefix without its
+trailing underscore (`BITFORMS_MCP_DISABLED`). See "Choosing features".
 
 ## What the kit stores
 
@@ -232,15 +293,51 @@ All names start with the plugin's `option_prefix`:
   multisite), unless `conversations` is replaced;
 - short-lived transients for rate limits, OAuth codes and confirmations.
 
-Delete them in the plugin's uninstall routine. Provider keys are encrypted with the
+### Tables (`storage => tables`)
+
+With `'storage' => PluginContext::STORAGE_TABLES` the kit keeps chat history and the activity log in its own
+tables, built with the Bit Apps ORM (`Storage\Migrations`, `Storage\Model`):
+
+| Table | For | Created when the plugin ships |
+| --- | --- | --- |
+| `{wp_prefix}{option_prefix}aikit_conversations` | every conversation, searchable, pinned, archived | the assistant **and** `history` |
+| `{wp_prefix}{option_prefix}aikit_audit_log` | every tool call, paged and filtered in SQL | `audit` (and MCP or the assistant) |
+
+A part the plugin leaves out gets no table: `FEATURE_AUDIT => false` means no log table, ever. Runtime
+switches (settings, constants, filters) do not create or drop tables.
+
+```php
+register_activation_hook(__FILE__, fn () => Kit::for('bit-connect')?->installTables());
+register_deactivation_hook(__FILE__, fn () => Kit::for('bit-connect')?->deactivate());
+// uninstall.php runs without the plugin booted: build the same context and boot it there.
+Kit::boot(MyPlugin::aiContext())->uninstallTables();   // drops both tables and the schema stamp
+```
+
+Updates do not run activation hooks, so the kit also creates or upgrades the tables on the first request
+after the schema or the shipped parts change, on any request (front end, REST, cron), with one autoloaded
+option read otherwise. Until a table exists its store falls back to the option or user meta, so no chat
+turn or log event is lost. A daily cron (`{option_prefix}aikit_purge`) deletes activity older than the MCP
+setting `audit_retention_days` and conversations untouched for longer than the assistant setting
+`history_days`. The ORM's shared plugin prefix is never changed: the kit's models carry their own.
+
+A plugin with tables of its own (Bit Form: `{prefix}bitforms_ai_conversations` and
+`{prefix}bitforms_ai_audit_log`) passes them as the `conversations` and `audit` services instead; those
+win over `storage`.
+
+Delete the options and user meta in the plugin's uninstall routine (and call `uninstallTables()` with
+`storage => tables`). Provider keys are encrypted with the
 site's salts; define `AUTH_KEY` and friends in `wp-config.php`.
 
 ## Documentation
 
-- `docs/ADOPTION.md` — tool spec reference, transport and OAuth details, the
-  assistant API, and the migration paths for Bit PI Pro and Bit CRM Pro, which
-  already ship their own MCP servers.
-- `CONTRIBUTING.md` — the prefixing-safety rules every contribution must follow.
+- `docs/ADOPTION.md` — adopting the kit in a plugin, step by step: tools, transport and OAuth, the
+  assistant, the admin UI, and the migration paths for Bit PI Pro and Bit CRM Pro.
+- `docs/ARCHITECTURE.md` — how the PHP library, the REST routes and the UI package fit together, what
+  each request runs, storage, and where new code goes.
+- `docs/SECURITY.md` — who may call what, how tool calls are protected, what reaches the model, secrets.
+- `docs/RELEASING.md` — versioning, cutting a release (Packagist and npm), upgrading a consumer.
+- `frontend/README.md` — the UI package: install, components, hooks, theming, slots, translation.
+- `CONTRIBUTING.md` / `frontend/CONTRIBUTING.md` — the rules every contribution follows.
 - `CHANGELOG.md` / `UPGRADING.md` — what changed per version, and breaking changes.
 
 Versions follow SemVer: within a major version changes are additive, so `^1.1`
@@ -251,10 +348,17 @@ is safe to update.
 ```bash
 composer install
 composer check      # lint + PHP 8.0 compatibility + prefix-safety + rector + tests
+
+# the kit's tables against MySQL: point at a WordPress test library and its config (Bit Form's work)
+WP_TESTS_DIR=../bitform/tests/__libs WP_TESTS_CONFIG_FILE_PATH=../bitform/tests.config.php composer test-integration
+
+cd frontend && pnpm install
+pnpm check          # types + tests + build + size budgets + string list + PHP↔UI contract
+pnpm playground     # every component and layout against a mock backend
 ```
 
-Tests run on plain PHP with WordPress stubs (`tests/bootstrap.php`); no WordPress
-install is needed.
+`composer check` runs on plain PHP with WordPress stubs (`tests/bootstrap.php`); no WordPress install is
+needed. The integration tier (`tests/Integration`) needs one and skips without it.
 
 ## License
 

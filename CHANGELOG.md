@@ -6,6 +6,76 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-27
+
+### Added
+- Optional parts a plugin can leave out in `PluginContext` `features`, with no UI and nothing to save:
+  `FEATURE_AUDIT` (activity log), `FEATURE_HISTORY` (earlier chats), `FEATURE_OAUTH`, `FEATURE_API_KEYS`,
+  `FEATURE_ABILITIES` and `FEATURE_MCP_ADAPTER` (all on by default). A part left out registers no hooks or
+  REST routes, saved settings cannot switch it on, `Kit::uiBootstrap()` reports it in `features`, and the
+  UI package hides its tabs, cards and rows (`featureOn()` / `useFeature()` in `/core`).
+- Table storage on the Bit Apps ORM: `PluginContext` `storage => tables` keeps chat history in
+  `{prefix}aikit_conversations` and the activity log in `{prefix}aikit_audit_log` (searched, filtered and
+  paged in SQL), created only for the parts the plugin ships. `Kit::installTables()`, `deactivate()`,
+  `uninstallTables()`; the tables are also created or upgraded on the first request after an update, a
+  daily cron purges by the retention settings, and the stores fall back to the option and user meta until
+  the tables exist. `Storage\Migrations`, `Storage\Model`, `TableConversationRepository`,
+  `TableAuditLogger`. New dependency: `bitapps/wp-database` ^2.0 (the ORM every Bit plugin ships).
+- Integration tier `composer test-integration` (`phpunit.integration.xml`, `tests/Integration`): the table storage
+  against a real WordPress and MySQL; skips unless `WP_TESTS_DIR` and `WP_TESTS_CONFIG_FILE_PATH` are set.
+- Admin REST routes under `<rest_namespace>/ai/*` (`Rest\RestRoutes`), opt-in through the PluginContext
+  feature `rest_ui`: the chat panel (`assistant/view|chat|decide|reset|history`, `assistant/conversations/{id}`
+  open/rename/flags/delete), the settings screens (`settings/assistant`, `settings/mcp`), the MCP screen
+  (`mcp/state`, `mcp/activity`, `mcp/api-keys`, `mcp/connections`). WordPress cookie + `X-WP-Nonce` auth;
+  every route requires `can_use`, saving and clearing need the new `manage_cap` (`manage_options` by default).
+  A plugin that opts in writes no controllers; the host adds its own through the filters below.
+- `Kit::uiBootstrap()`: what the admin UI needs before its first request (REST base, nonce, what the user may
+  do, which features are shipped and on, the engine, brand), for the host to localize under its own variable.
+- Hooks for host plugins: `chatContextHook` (turn the browser's ids into the page-context sentence and the
+  stored `about`), `chatViewHook` (add to every chat reply, e.g. a preview), `conversationSwitchHook`
+  (before reset/open/forget), `settingsSavedHook` (after a save through the kit), `uiBootstrapHook`,
+  `restPermissionHook`; constants `Contract::REST_BASE` and `CONVERSATION_SOURCES_ACTION`.
+- Conversation history: `Assistant::rename()` and `setFlags()` (pinned / archived, kept inside the
+  conversation's `context` so no repository needs new columns); `history()` takes `$archived` and lists
+  pinned conversations first; optional `Ai\ConversationQueryInterface` lets a table-backed repository do
+  that in SQL; the view's `conversation` carries `pinned` and `archived`.
+- `Audit\SearchableAuditLog` (`search()`, `facets()`, `clear()`) for activity screens; `OptionsAuditLogger`
+  implements it; `Kit::auditSearch()`, `auditFacets()`, `clearAudit()` fall back for loggers that cannot.
+- `PluginContext` `manage_cap` and `canManage()`; `Kit::useEngineFactory()` test seam.
+- `@bitapps/wp-ai-kit-ui` (repo folder `frontend/`, npm): the admin UI on those routes. `/core` holds the
+  types, REST transport, store (`useSyncExternalStore`, no state library), `AiKitProvider`, hooks and the
+  window bus; `/components` the chat (`AssistantChat`, composer with `@` mentions and `/` commands, pending
+  action card, Markdown subset with a link policy), conversation history (search, rename, pin, archive,
+  delete), `AssistantSettingsForm`, `McpSettings` (overview, connect guides for 12 AI apps, connections, API
+  keys, tools, activity, diagnostics), `Panel` and `FloatingLauncher`; `/antd` an optional slot map for antd
+  hosts. Primitives are injectable slots with plain-HTML defaults; styling is `--aikit-*` tokens on
+  zero-specificity rules. Contract `"1"`.
+- Settings screens show what a setting does behind an info button beside its label (`help="tooltip"`,
+  default) or under it (`help="inline"`); privacy and security consequences and current states stay visible
+  as a one-line note. `SettingText`, `HelpTip`, `HelpText` and `HelpModeProvider` are exported for host rows.
+- `docs/ARCHITECTURE.md`, `docs/SECURITY.md` and `docs/RELEASING.md`; README sections on choosing features
+  and storage; ADOPTION sections on leaving parts out and on the admin UI.
+- CI for the UI package (`.github/workflows/frontend.yml`) and a release workflow that publishes it to npm
+  with provenance on a `v*` tag (`release.yml`); `pnpm contract:check` keeps the UI's contract equal to
+  `Contract::CONTRACT_VERSION`.
+
+### Fixed
+- Switching the activity log off (feature `audit`, setting, constant or filter) now also stops a
+  plugin-supplied audit logger; before, a logger passed in `services.audit` kept recording.
+
+### Security
+- Without the manage capability, a user's activity log, its filter menus and the MCP screen's recent calls
+  show only that user's own calls (they listed every user's calls, app names and record ids).
+- Only a manager may create an API key that never expires or never pauses for confirmation (`unattended`),
+  and no key can be created while API keys are switched off.
+- Route ids (`{id}`) are read from the URL only; an `id` in the query or body no longer changes which
+  conversation, key or connection a route acts on (`?id=all` could delete all of a user's chats).
+- Signed-out requests get 401 before `bitapps_ai_rest_permission_<slug>` runs, so the filter cannot open
+  a route to visitors; it now also receives the route's level (`use` / `manage`).
+- An approved action is taken off the conversation before it runs, so a second approval sent at the same
+  time, or after a failed turn, cannot run it twice.
+- The history search is capped at 100 characters; non-scalar activity filters are ignored.
+
 ## [1.1.2] - 2026-10-19
 
 ### Added

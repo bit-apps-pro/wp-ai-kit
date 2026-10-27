@@ -12,8 +12,9 @@ still break after prefixing. `composer prefix-check` enforces these rules; CI ru
    `prefixUse()` rewrites *every* multi-segment `use X\Y;` line, so
    `use WP\MCP\Core\McpAdapter;` becomes `use <Prefix>\WP\MCP\Core\McpAdapter;`
    and fatals. Write `\WP\MCP\Core\McpAdapter::instance()`, `\WP_Ability`,
-   `\WP_Error` inline. `use` lines may only import `BitApps\AiKit\…` (and
-   `PHPUnit\…` in tests).
+   `\WP_Error` inline. `use` lines may only import `BitApps\AiKit\…`,
+   `BitApps\WPDatabase\…` (the one dependency; consumers prefix it with the kit)
+   and `PHPUnit\…` in tests.
 2. **No closure `use ($var)` on a source line that also contains a backslash.**
    Same regex. Put the `use (…)` on its own line or avoid the backslash.
 3. **No class names in string literals.** `'BitApps\\AiKit\\Foo'` stays unprefixed
@@ -43,6 +44,8 @@ still break after prefixing. `composer prefix-check` enforces these rules; CI ru
 
 - Branch from `main`, keep PRs focused, add or update tests in `tests/`.
 - `composer check` must pass (lint, PHP 8.0 compatibility, prefix-safety, tests).
+- A change under `frontend/` must pass `pnpm check` there (types, tests, build, size budgets, string list,
+  contract); its own rules are in `frontend/CONTRIBUTING.md`. Releasing: `docs/RELEASING.md`.
 - SemVer: during `0.x` a minor may break; from `1.0` only additive changes within
   a major. Note breaking changes in `UPGRADING.md`, everything in `CHANGELOG.md`.
 - Cross-plugin names (`Contract.php`) change only with `CONTRACT_VERSION`.
