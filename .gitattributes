@@ -5,6 +5,8 @@
 /.gitignore       export-ignore
 /.php-cs-fixer.php export-ignore
 /phpunit.xml      export-ignore
+/phpunit.integration.xml export-ignore
 /rector.php       export-ignore
 /docs             export-ignore
 /CONTRIBUTING.md  export-ignore
+/frontend         export-ignore

@@ -26,6 +26,57 @@ final class PluginContext
     public const FEATURE_ASSISTANT = 'assistant';
 
     /**
+     * The kit's own admin REST routes (`<rest_namespace>/ai/...`) for the chat
+     * panel and settings screens, so a plugin writes no controllers. Off unless
+     * the plugin opts in: a plugin with its own endpoints keeps one surface.
+     */
+    public const FEATURE_REST_UI = 'rest_ui';
+
+    /*
+     * Optional parts a plugin may leave out (all on by default). One left out is
+     * gone for good on that plugin: no hooks, no REST routes, no settings to switch
+     * it back on, and the admin UI hides it. Settings, constants and filters can
+     * still switch a shipped part off at run time.
+     */
+
+    /** The activity log: every tool call by the assistant and MCP apps, its screens and REST routes. */
+    public const FEATURE_AUDIT = 'audit';
+
+    /** Earlier chats: the history list, open, rename, pin, archive and delete. The current chat stays. */
+    public const FEATURE_HISTORY = 'history';
+
+    /** MCP sign-in with OAuth (approval page, connected apps). */
+    public const FEATURE_OAUTH = 'oauth';
+
+    /** MCP API keys for scripts and apps that cannot sign in with OAuth. */
+    public const FEATURE_API_KEYS = 'api_keys';
+
+    /** Offering the tools as WordPress abilities (Abilities API, WordPress 6.9+). */
+    public const FEATURE_ABILITIES = 'abilities';
+
+    /** Listing the tools on the WordPress MCP Adapter plugin's default server. */
+    public const FEATURE_MCP_ADAPTER = 'mcp_adapter';
+
+    /** Conversations in user meta, the activity log in an option (bounded). */
+    public const STORAGE_OPTIONS = 'options';
+
+    /** Conversations and the activity log in tables the kit creates. */
+    public const STORAGE_TABLES = 'tables';
+
+    /** Features a plugin may name in `features`, and whether each ships when left out. */
+    private const FEATURE_DEFAULTS = [
+        self::FEATURE_MCP         => true,
+        self::FEATURE_ASSISTANT   => true,
+        self::FEATURE_REST_UI     => false,
+        self::FEATURE_AUDIT       => true,
+        self::FEATURE_HISTORY     => true,
+        self::FEATURE_OAUTH       => true,
+        self::FEATURE_API_KEYS    => true,
+        self::FEATURE_ABILITIES   => true,
+        self::FEATURE_MCP_ADAPTER => true,
+    ];
+
+    /**
      * Services that may be given as a factory (a Closure returning the object),
      * so building them, and loading their classes, waits until the kit needs them.
      */
@@ -73,6 +124,12 @@ final class PluginContext
     /** @var array<string, bool> which features this plugin ships (FEATURE_*) */
     private array $features;
 
+    /** The capability that may change settings, keys and other users' connections. */
+    private string $manageCap;
+
+    /** Where conversations and the activity log live: `options` (default) or `tables`. */
+    private string $storage;
+
     /**
      * @param array<string, mixed> $args see create() for the keys
      */
@@ -95,6 +152,8 @@ final class PluginContext
         $this->websiteUrl = $args['website_url'];
         $this->icons = $args['icons'];
         $this->features = $args['features'];
+        $this->manageCap = $args['manage_cap'];
+        $this->storage = $args['storage'];
     }
 
     /**
@@ -108,9 +167,18 @@ final class PluginContext
      * `src` (https or data:image URI), optional `mimeType`, `sizes` ("48x48" or "any") and
      * `theme` ("light"/"dark")), which describe the server to MCP clients in `serverInfo`;
      * an invalid URL or icon entry is left out rather than failing the boot,
-     * `features` (array<string,bool>: which of FEATURE_MCP / FEATURE_ASSISTANT the plugin
-     * ships; both by default. A feature left out registers no hooks and can never be
-     * switched on, whatever its settings say).
+     * `features` (array<string,bool>: which parts the plugin ships — FEATURE_MCP and
+     * FEATURE_ASSISTANT, and the optional parts FEATURE_AUDIT, FEATURE_HISTORY,
+     * FEATURE_OAUTH, FEATURE_API_KEYS, FEATURE_ABILITIES and FEATURE_MCP_ADAPTER; all on
+     * by default. A feature set to false registers no hooks or routes and can never be
+     * switched on, whatever its settings say. FEATURE_REST_UI is off by default),
+     * `manage_cap` (string capability for changing settings and others' keys and
+     * connections; `manage_options` by default — `can_use` still gates every route),
+     * `storage` (`options`, the default: one conversation per user in user meta and the last
+     * 200 activity events in an option; or `tables`: the kit creates and maintains
+     * `{wp_prefix}{option_prefix}aikit_conversations` and `…aikit_audit_log` for the parts the
+     * plugin ships, with full chat history and a searchable log. A plugin's own `conversations`
+     * or `audit` service still wins).
      *
      * @param array<string, mixed> $args
      */
@@ -147,6 +215,8 @@ final class PluginContext
             'website_url'  => '',
             'icons'        => [],
             'features'     => [],
+            'manage_cap'   => 'manage_options',
+            'storage'      => self::STORAGE_OPTIONS,
         ];
 
         $args = array_merge($defaults, $args);
@@ -157,7 +227,7 @@ final class PluginContext
             }
         }
 
-        foreach (['instructions', 'description', 'website_url'] as $string) {
+        foreach (['instructions', 'description', 'website_url', 'manage_cap'] as $string) {
             if (!\is_string($args[$string])) {
                 throw new \InvalidArgumentException("PluginContext '{$string}' must be a string.");
             }
@@ -172,10 +242,20 @@ final class PluginContext
         $args['website_url'] = self::isWebUrl($args['website_url']) ? $args['website_url'] : '';
         $args['icons'] = self::cleanIcons($args['icons']);
 
-        $args['features'] = [
-            self::FEATURE_MCP       => (bool) ($args['features'][self::FEATURE_MCP] ?? true),
-            self::FEATURE_ASSISTANT => (bool) ($args['features'][self::FEATURE_ASSISTANT] ?? true),
-        ];
+        if (!\in_array($args['storage'], [self::STORAGE_OPTIONS, self::STORAGE_TABLES], true)) {
+            throw new \InvalidArgumentException("PluginContext 'storage' must be 'options' or 'tables'.");
+        }
+
+        if ('' === trim($args['manage_cap'])) {
+            throw new \InvalidArgumentException("PluginContext 'manage_cap' must name a capability.");
+        }
+
+        $given = \is_array($args['features'] ?? null) ? $args['features'] : [];
+        $features = [];
+        foreach (self::FEATURE_DEFAULTS as $feature => $default) {
+            $features[$feature] = (bool) ($given[$feature] ?? $default);
+        }
+        $args['features'] = $features;
 
         return new self($args);
     }
@@ -212,9 +292,27 @@ final class PluginContext
         return $this->optionPrefix . $key;
     }
 
+    /** `options` or `tables` (STORAGE_*). */
+    public function storage(): string
+    {
+        return $this->storage;
+    }
+
     public function optionPrefix(): string
     {
         return $this->optionPrefix;
+    }
+
+    /** The capability that may change settings and manage other users' keys and connections. */
+    public function manageCapability(): string
+    {
+        return $this->manageCap;
+    }
+
+    /** Whether the user may change settings and manage every user's keys and connections. */
+    public function canManage(int $userId): bool
+    {
+        return $userId > 0 && \function_exists('user_can') && (bool) user_can($userId, $this->manageCap);
     }
 
     /** Whether the user may use the plugin's AI/MCP features at all. */
@@ -291,7 +389,7 @@ final class PluginContext
         return $service;
     }
 
-    /** Whether the plugin ships a feature (FEATURE_MCP, FEATURE_ASSISTANT). */
+    /** Whether the plugin ships a feature (any FEATURE_* constant). */
     public function provides(string $feature): bool
     {
         return $this->features[$feature] ?? false;

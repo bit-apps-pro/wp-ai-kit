@@ -11,6 +11,7 @@ use BitApps\AiKit\Ai\UserMetaConversationRepository;
 use BitApps\AiKit\Audit\AuditLoggerInterface;
 use BitApps\AiKit\Audit\NullAuditLogger;
 use BitApps\AiKit\Audit\OptionsAuditLogger;
+use BitApps\AiKit\Audit\SearchableAuditLog;
 use BitApps\AiKit\Mcp\Auth\ApiKeyService;
 use BitApps\AiKit\Mcp\Auth\BearerResolverInterface;
 use BitApps\AiKit\Mcp\OAuth\OAuthEndpoints;
@@ -21,6 +22,7 @@ use BitApps\AiKit\Mcp\OAuth\TokenService;
 use BitApps\AiKit\Mcp\Server\McpServer;
 use BitApps\AiKit\Mcp\Transport\HttpTransport;
 use BitApps\AiKit\Mcp\Transport\WpMcpAdapterBridge;
+use BitApps\AiKit\Rest\RestRoutes;
 use BitApps\AiKit\Security\PiiMasker;
 use BitApps\AiKit\Security\RateLimiter;
 use BitApps\AiKit\Security\SecretRedactor;
@@ -28,6 +30,9 @@ use BitApps\AiKit\Settings\AiSettings;
 use BitApps\AiKit\Settings\FeatureFlags;
 use BitApps\AiKit\Settings\McpSettings;
 use BitApps\AiKit\Settings\RequirementsReport;
+use BitApps\AiKit\Storage\TableAuditLogger;
+use BitApps\AiKit\Storage\TableConversationRepository;
+use BitApps\AiKit\Storage\Tables;
 use BitApps\AiKit\Tools\AccessPolicy;
 use BitApps\AiKit\Tools\Confirmation\ConfirmationGate;
 use BitApps\AiKit\Tools\Scopes;
@@ -68,8 +73,13 @@ final class Kit
 
     private ?OAuthServer $oauth = null;
 
+    private ?Tables $tables = null;
+
     /** @var BearerResolverInterface[] resolvers added by features such as OAuth */
     private array $extraResolvers = [];
+
+    /** @var null|callable(): ?\BitApps\AiKit\Ai\Engine\EngineInterface test seam used by assistant() when it gets none */
+    private $engineFactory;
 
     private function __construct(private PluginContext $context, private FeatureFlags $features) {}
 
@@ -169,19 +179,128 @@ final class Kit
         return AccessPolicy::fromSettings($this->features->settings($feature));
     }
 
-    /** The plugin's audit logger, the options-backed default, or none when audit is off. */
+    /**
+     * The plugin's audit logger, the options-backed default, or none when the
+     * activity log is off — by the plugin (`features.audit`), a setting, a
+     * constant or a filter. Off wins over a plugin-supplied logger.
+     */
     public function auditLogger(): AuditLoggerInterface
     {
+        if (!$this->features->isEnabled(FeatureFlags::AUDIT)) {
+            return new NullAuditLogger();
+        }
+
         $service = $this->context->service('audit');
         if ($service instanceof AuditLoggerInterface) {
             return $service;
         }
 
-        if (!$this->features->isEnabled(FeatureFlags::AUDIT)) {
-            return new NullAuditLogger();
+        $options = new OptionsAuditLogger($this->context->optionName('ai_audit_log'));
+        if (\in_array(Tables::AUDIT, $this->tables()->wanted(), true)) {
+            return new TableAuditLogger($this->tables(), $options);
         }
 
-        return new OptionsAuditLogger($this->context->optionName('ai_audit_log'));
+        return $options;
+    }
+
+    /** The kit's own tables (PluginContext `storage => tables`). */
+    public function tables(): Tables
+    {
+        return $this->tables ??= new Tables($this->context);
+    }
+
+    /**
+     * Create the kit's tables for the parts this plugin ships. Call it from the
+     * plugin's activation; the kit also runs it on the first request after an update.
+     */
+    public function installTables(): bool
+    {
+        return $this->tables()->install();
+    }
+
+    /** Drop the kit's tables and stop the purge. Call it from the plugin's uninstall. */
+    public function uninstallTables(): void
+    {
+        $this->deactivate();
+        $this->tables()->uninstall();
+    }
+
+    /** Stop the kit's scheduled work. Call it from the plugin's deactivation. */
+    public function deactivate(): void
+    {
+        if (\function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook($this->purgeHook());
+        }
+    }
+
+    /** init: keep the tables current and the daily purge scheduled (storage `tables` only). */
+    public function onStorageInit(): void
+    {
+        $this->tables()->maybeInstall();
+        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->purgeHook())) {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', $this->purgeHook());
+        }
+    }
+
+    /** The daily purge: activity older than its retention, conversations untouched for longer than the history keeps them. */
+    public function onPurge(): void
+    {
+        $logger = $this->auditLogger();
+        if ($logger instanceof TableAuditLogger) {
+            $logger->purgeOlderThan((int) ($this->mcpSettings()->read()['audit_retention_days'] ?? 90));
+        }
+        if (\in_array(Tables::CONVERSATIONS, $this->tables()->wanted(), true)) {
+            $days = max(1, (int) ($this->aiSettings()->read()['history_days'] ?? 30));
+            $this->conversations()->repository()->purgeOlderThan($days * DAY_IN_SECONDS);
+        }
+    }
+
+    /** `{option_prefix}aikit_purge`: the cron hook of the daily purge. */
+    public function purgeHook(): string
+    {
+        return $this->context->optionName('aikit_purge');
+    }
+
+    /**
+     * One page of the audit trail for an activity screen. A logger that cannot
+     * search answers with its most recent events, unfiltered.
+     *
+     * @param array<string, mixed> $filters see SearchableAuditLog::search()
+     *
+     * @return array{rows: array<int, array<string, mixed>>, total: int}
+     */
+    public function auditSearch(array $filters, int $page = 1, int $perPage = 25): array
+    {
+        $logger = $this->auditLogger();
+        if ($logger instanceof SearchableAuditLog) {
+            return $logger->search($filters, $page, $perPage);
+        }
+
+        $perPage = max(1, min(100, $perPage));
+        $rows = $logger->recent($perPage * max(1, $page));
+
+        return ['rows' => \array_slice($rows, ($page - 1) * $perPage, $perPage), 'total' => \count($rows)];
+    }
+
+    /**
+     * The values an activity screen's filter menus offer (empty lists for a
+     * logger that cannot search).
+     *
+     * @return array<string, array<int, mixed>>
+     */
+    public function auditFacets(): array
+    {
+        $logger = $this->auditLogger();
+
+        return $logger instanceof SearchableAuditLog ? $logger->facets() : array_fill_keys(SearchableAuditLog::FILTERS, []);
+    }
+
+    /** Empty the audit trail; false when this site's logger cannot. */
+    public function clearAudit(): bool
+    {
+        $logger = $this->auditLogger();
+
+        return $logger instanceof SearchableAuditLog && $logger->clear();
     }
 
     /** The MCP server for this plugin (transport-independent dispatch). */
@@ -395,12 +514,18 @@ final class Kit
      */
     public function onRestApiInit(): void
     {
-        if (!$this->features->isEnabled(FeatureFlags::MCP_SERVER)) {
+        $namespace = $this->context->restNamespace();
+
+        // The admin UI's routes: controllers are built when a request reaches one.
+        if ($this->context->provides(PluginContext::FEATURE_REST_UI)) {
+            RestRoutes::register($namespace, fn () => $this, $this->context);
+        }
+
+        if (!$this->context->provides(PluginContext::FEATURE_MCP) || !$this->features->isEnabled(FeatureFlags::MCP_SERVER)) {
             return;
         }
 
         // Routes only: the server, its tools and the OAuth stores are built when a request reaches them.
-        $namespace = $this->context->restNamespace();
         HttpTransport::registerLazily($namespace, fn () => $this->transport());
         add_filter('rest_post_dispatch', [$this, 'onRestPostDispatch'], 10, 3);
 
@@ -466,6 +591,7 @@ final class Kit
         $this->transport = null;
         $this->abilities = null;
         $this->oauth = null;
+        do_action(Contract::settingsSavedHook($this->context->slug()), 'mcp', $saved);
 
         return $saved;
     }
@@ -537,6 +663,7 @@ final class Kit
         $saved = $this->aiSettings()->save($input, array_keys($this->registry()->all()));
         $this->runner = null;
         $this->abilities = null;
+        do_action(Contract::settingsSavedHook($this->context->slug()), 'assistant', $saved);
 
         return $saved;
     }
@@ -566,6 +693,9 @@ final class Kit
         if ($repository instanceof ConversationRepositoryInterface) {
             return new ConversationStore($repository, $metaKey . '_active', null, $maxAge);
         }
+        if (\in_array(Tables::CONVERSATIONS, $this->tables()->wanted(), true)) {
+            return new ConversationStore(new TableConversationRepository($this->tables(), new UserMetaConversationRepository($metaKey)), $metaKey . '_active', null, $maxAge);
+        }
 
         return new ConversationStore(new UserMetaConversationRepository($metaKey), $metaKey . '_active', 'current', $maxAge);
     }
@@ -580,8 +710,85 @@ final class Kit
             $this->registry(),
             $this->conversations(),
             new RateLimiter($this->context->optionPrefix()),
-            $engineFactory
+            $engineFactory ?? $this->engineFactory
         );
+    }
+
+    /**
+     * Test seam: the engine every assistant() built without one should use (the
+     * REST controllers build their own assistants).
+     *
+     * @param null|callable(): ?\BitApps\AiKit\Ai\Engine\EngineInterface $engineFactory
+     */
+    public function useEngineFactory(?callable $engineFactory): void
+    {
+        $this->engineFactory = $engineFactory;
+    }
+
+    /**
+     * What the admin UI needs before its first request: where the REST routes
+     * are, the nonce, who the user is and what they may do, which features this
+     * plugin ships and has on, and the plugin's name and brand. The host plugin
+     * localizes it under its own script variable; `uiBootstrapHook` may add keys.
+     *
+     * @return array<string, mixed>
+     */
+    public function uiBootstrap(): array
+    {
+        $userId = (int) get_current_user_id();
+        $canUse = $userId > 0 && $this->context->canUse($userId);
+        $assistantShipped = $this->context->provides(PluginContext::FEATURE_ASSISTANT) && !$this->features->isForcedOff(FeatureFlags::ASSISTANT);
+        $assistantOn = $assistantShipped && $this->features->isEnabled(FeatureFlags::ASSISTANT);
+
+        $engine = null;
+        $reason = null;
+        if ($assistantOn && $canUse) {
+            $resolved = $this->assistant()->resolveEngine();
+            $engine = null !== $resolved['engine'] ? ['key' => $resolved['engine']->key(), 'label' => $resolved['engine']->label()] : null;
+            $reason = $resolved['reason'];
+        }
+
+        $brand = $this->context->service('brand');
+        $icons = $this->context->icons();
+        $bootstrap = [
+            'contract' => Contract::CONTRACT_VERSION,
+            'slug'     => $this->context->slug(),
+            'name'     => $this->context->name(),
+            'brand'    => [
+                'name'  => $this->context->name(),
+                'color' => \is_array($brand) && \is_string($brand['color'] ?? null) ? $brand['color'] : null,
+                'icon'  => $icons[0]['src'] ?? null,
+            ],
+            'restBase'  => $this->context->provides(PluginContext::FEATURE_REST_UI) ? rest_url($this->context->restNamespace() . Contract::REST_BASE) : null,
+            'nonce'     => wp_create_nonce('wp_rest'),
+            'canUse'    => $canUse,
+            'canManage' => $canUse && $this->context->canManage($userId),
+            'canUpload' => $canUse && \function_exists('current_user_can') && current_user_can('upload_files'),
+            'features'  => [
+                'assistant'   => $assistantShipped,
+                'mcp'         => $this->context->provides(PluginContext::FEATURE_MCP) && !$this->features->isForcedOff(FeatureFlags::MCP_SERVER),
+                'restUi'      => $this->context->provides(PluginContext::FEATURE_REST_UI),
+                'history'     => $this->context->provides(PluginContext::FEATURE_HISTORY),
+                'audit'       => $this->context->provides(PluginContext::FEATURE_AUDIT),
+                'oauth'       => $this->context->provides(PluginContext::FEATURE_OAUTH),
+                'apiKeys'     => $this->context->provides(PluginContext::FEATURE_API_KEYS),
+                'abilities'   => $this->context->provides(PluginContext::FEATURE_ABILITIES),
+                'mcpAdapter'  => $this->context->provides(PluginContext::FEATURE_MCP_ADAPTER),
+                'attachments' => false,
+                'stream'      => false,
+            ],
+            'assistantOn'  => $assistantOn,
+            'mcpOn'        => $this->context->provides(PluginContext::FEATURE_MCP) && $this->features->isEnabled(FeatureFlags::MCP_SERVER),
+            'engine'       => $engine,
+            'engineReason' => $reason,
+            'user'         => ['id' => $userId, 'locale' => \function_exists('get_user_locale') ? (string) get_user_locale() : 'en_US'],
+            'settingsUrl'  => $this->context->url('settings'),
+            'docsUrl'      => $this->context->url('docs'),
+        ];
+
+        $filtered = apply_filters(Contract::uiBootstrapHook($this->context->slug()), $bootstrap);
+
+        return \is_array($filtered) ? $filtered : $bootstrap;
     }
 
     /**
@@ -709,11 +916,17 @@ final class Kit
      */
     private function registerHooks(): void
     {
+        if ([] !== $this->tables()->wanted()) {
+            add_action('init', [$this, 'onStorageInit'], 1, 0);
+            add_action($this->purgeHook(), [$this, 'onPurge'], 10, 0);
+        }
+        if ($this->context->provides(PluginContext::FEATURE_REST_UI) || $this->context->provides(PluginContext::FEATURE_MCP)) {
+            add_action('rest_api_init', [$this, 'onRestApiInit'], 20, 0);
+        }
         if (!$this->context->provides(PluginContext::FEATURE_MCP)) {
             return;
         }
 
-        add_action('rest_api_init', [$this, 'onRestApiInit'], 20, 0);
         add_action('deleted_user', [$this, 'onUserDeleted'], 10, 1);
         add_action('wp_abilities_api_categories_init', [$this, 'onAbilityCategoriesInit'], 10, 0);
         add_action('wp_abilities_api_init', [$this, 'onAbilitiesInit'], 10, 0);

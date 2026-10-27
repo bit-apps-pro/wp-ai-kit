@@ -3,7 +3,8 @@
   The kit's own suite runs on plain PHP with WordPress stubs (tests/bootstrap.php),
   as bitapps/wp-kit does, so it needs no WordPress install or database. Behaviour
   that only a real WordPress can prove (REST dispatch, Abilities API, Application
-  Passwords) is covered by the consuming plugins' suites and the wp-env job.
+  Passwords) is covered by the consuming plugins' suites; the kit's own tables by
+  the integration tier (phpunit.integration.xml, `composer test-integration`).
 -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.6/phpunit.xsd"
@@ -14,6 +15,8 @@
   <testsuites>
     <testsuite name="wp-ai-kit">
       <directory suffix="Test.php">tests</directory>
+      <!-- Needs WordPress and MySQL: phpunit.integration.xml -->
+      <exclude>tests/Integration</exclude>
     </testsuite>
   </testsuites>
   <coverage>

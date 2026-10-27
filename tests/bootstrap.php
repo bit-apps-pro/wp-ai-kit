@@ -72,6 +72,9 @@ final class AiKitTestState
     /** @var array<int, array<string, mixed>> userId => key => value */
     public static array $userMeta = [];
 
+    /** @var array<string, array{timestamp: int, recurrence: string}> hook => event */
+    public static array $cron = [];
+
     public static function reset(): void
     {
         self::$options = [];
@@ -87,6 +90,7 @@ final class AiKitTestState
         self::$httpResponses = [];
         self::$httpRequests = [];
         self::$userMeta = [];
+        self::$cron = [];
         AiKitRest::$routes = [];
         if (class_exists('AiKitAbilities', false)) {
             AiKitAbilities::reset();
@@ -98,6 +102,28 @@ final class AiKitTestState
 function resetAiKitTestState(): void
 {
     AiKitTestState::reset();
+}
+
+// --- cron ------------------------------------------------------------------
+
+function wp_next_scheduled($hook)
+{
+    return AiKitTestState::$cron[$hook]['timestamp'] ?? false;
+}
+
+function wp_schedule_event($timestamp, $recurrence, $hook)
+{
+    AiKitTestState::$cron[$hook] = ['timestamp' => (int) $timestamp, 'recurrence' => (string) $recurrence];
+
+    return true;
+}
+
+function wp_clear_scheduled_hook($hook)
+{
+    $had = isset(AiKitTestState::$cron[$hook]) ? 1 : 0;
+    unset(AiKitTestState::$cron[$hook]);
+
+    return $had;
 }
 
 // --- hooks -----------------------------------------------------------------
@@ -461,6 +487,11 @@ function delete_user_meta($userId, $key, $value = '')
     return true;
 }
 
+function get_user_locale($user = 0)
+{
+    return 'en_US';
+}
+
 function get_bloginfo($show = '', $filter = 'raw')
 {
     return 'name' === $show ? 'Example Site' : '';
@@ -557,6 +588,9 @@ if (!class_exists('WP_REST_Request')) {
 
         /** @var array<string, mixed> */
         public array $bodyParams = [];
+
+        /** @var array<string, mixed> */
+        public array $urlParams = [];
         private array $headers = [];
 
         private string $body = '';
@@ -608,6 +642,31 @@ if (!class_exists('WP_REST_Request')) {
             $decoded = json_decode($this->body, true);
 
             return \is_array($decoded) ? $decoded : null;
+        }
+
+        public function set_url_params(array $params): void
+        {
+            $this->urlParams = $params;
+        }
+
+        public function get_url_params()
+        {
+            return $this->urlParams;
+        }
+
+        public function get_params()
+        {
+            return array_merge($this->urlParams, $this->query, $this->bodyParams, $this->get_json_params() ?? []);
+        }
+
+        public function get_param($key)
+        {
+            return $this->get_params()[$key] ?? null;
+        }
+
+        public function set_param($key, $value): void
+        {
+            $this->bodyParams[$key] = $value;
         }
     }
 }

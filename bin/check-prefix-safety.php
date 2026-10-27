@@ -19,7 +19,8 @@
  * Usage: php bin/check-prefix-safety.php src [more dirs]
  */
 $roots = \array_slice($argv, 1) ?: ['src'];
-$allowedUsePrefixes = ['BitApps\AiKit\\', 'PHPUnit\\'];
+// The kit's own namespace, and its one dependency, the Bit Apps ORM, which every consumer prefixes with it.
+$allowedUsePrefixes = ['BitApps\AiKit\\', 'BitApps\WPDatabase\\', 'PHPUnit\\'];
 $errors = [];
 
 $composer = json_decode((string) file_get_contents(__DIR__ . '/../composer.json'), true);

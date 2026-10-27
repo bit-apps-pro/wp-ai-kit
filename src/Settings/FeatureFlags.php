@@ -46,6 +46,14 @@ final class FeatureFlags
         self::AUDIT            => 'AI',
     ];
 
+    /** The PluginContext part a plugin can leave out for each optional feature. */
+    private const OPTIONAL_PART = [
+        self::OAUTH            => PluginContext::FEATURE_OAUTH,
+        self::API_KEYS         => PluginContext::FEATURE_API_KEYS,
+        self::ABILITIES_BRIDGE => PluginContext::FEATURE_ABILITIES,
+        self::ADAPTER_BRIDGE   => PluginContext::FEATURE_MCP_ADAPTER,
+    ];
+
     /** Which settings option holds each feature's `enabled` flag. */
     private const SETTINGS_OPTION = [
         self::MCP_SERVER       => 'mcp_settings',
@@ -180,7 +188,13 @@ final class FeatureFlags
     private function shipped(string $feature): bool
     {
         if (self::AUDIT === $feature) {
-            return $this->context->provides(PluginContext::FEATURE_MCP) || $this->context->provides(PluginContext::FEATURE_ASSISTANT);
+            return $this->context->provides(PluginContext::FEATURE_AUDIT)
+                && ($this->context->provides(PluginContext::FEATURE_MCP) || $this->context->provides(PluginContext::FEATURE_ASSISTANT));
+        }
+
+        $part = self::OPTIONAL_PART[$feature] ?? null;
+        if (null !== $part && !$this->context->provides($part)) {
+            return false;
         }
 
         return $this->context->provides('MCP' === self::KILL_SWITCH_GROUP[$feature] ? PluginContext::FEATURE_MCP : PluginContext::FEATURE_ASSISTANT);

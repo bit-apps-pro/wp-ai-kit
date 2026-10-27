@@ -135,6 +135,9 @@ final class Assistant
         }
 
         $messages = $conversation['messages'];
+        // Taken off the conversation before it runs: a second approval sent at the same
+        // time, or after a failed turn, finds nothing to run instead of running it twice.
+        $this->store->save($userId, $messages, null);
 
         return $this->execute($userId, $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->resume($messages, $pending, $approve, $system, $call));
     }
@@ -148,13 +151,38 @@ final class Assistant
     }
 
     /**
-     * The user's earlier conversations, newest first (titles, not messages).
+     * The user's earlier conversations (titles, not messages): the live ones,
+     * pinned first and then newest first, or with $archived the archived ones.
      *
      * @return array{items: array<int, array<string, mixed>>, total: int}
      */
-    public function history(int $userId, string $search = '', int $limit = 20, int $offset = 0): array
+    public function history(int $userId, string $search = '', int $limit = 20, int $offset = 0, bool $archived = false): array
     {
-        return $this->store->list($userId, trim($search), $limit, $offset);
+        return $this->store->list($userId, trim($search), $limit, $offset, $archived);
+    }
+
+    /** Rename a conversation; the view of the open one (the title shows there). */
+    public function rename(int $userId, string $conversationId, string $title): array
+    {
+        if (!$this->store->rename($userId, $conversationId, $title)) {
+            return $this->failure($userId, 'That conversation no longer exists, or the title is empty.', 'not_found');
+        }
+
+        return $this->view($userId);
+    }
+
+    /**
+     * Pin or archive a conversation.
+     *
+     * @param array{pinned?: bool, archived?: bool} $flags
+     */
+    public function setFlags(int $userId, string $conversationId, array $flags): array
+    {
+        if (!$this->store->setFlags($userId, $conversationId, $flags)) {
+            return $this->failure($userId, 'That conversation no longer exists.', 'not_found');
+        }
+
+        return $this->view($userId);
     }
 
     /** Continue an earlier conversation. */
@@ -231,7 +259,12 @@ final class Assistant
             ];
         }
 
-        return ['messages' => $items, 'pending' => $pending, 'conversation' => ['id' => $conversation['id'], 'title' => $conversation['title']]];
+        return ['messages' => $items, 'pending' => $pending, 'conversation' => [
+            'id'       => $conversation['id'],
+            'title'    => $conversation['title'],
+            'pinned'   => !empty($conversation['context']['pinned']),
+            'archived' => !empty($conversation['context']['archived']),
+        ]];
     }
 
     /**

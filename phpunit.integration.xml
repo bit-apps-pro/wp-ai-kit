@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Integration tier: a real WordPress and MySQL, for what the stub suite cannot
+  prove (the ORM tables). Needs the WordPress test library and its config:
+    WP_TESTS_DIR=/path/to/wordpress-tests-lib \
+    WP_TESTS_CONFIG_FILE_PATH=/path/to/wp-tests-config.php \
+    composer test-integration
+  Without them it skips with a message. See tests/Integration/bootstrap.php.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.6/phpunit.xsd"
+         bootstrap="tests/Integration/bootstrap.php"
+         colors="true"
+         failOnRisky="true"
+         failOnWarning="true">
+  <testsuites>
+    <testsuite name="wp-ai-kit-integration">
+      <directory suffix="Test.php">tests/Integration</directory>
+    </testsuite>
+  </testsuites>
+</phpunit>

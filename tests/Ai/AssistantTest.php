@@ -3,7 +3,6 @@
 namespace BitApps\AiKit\Tests\Ai;
 
 use BitApps\AiKit\Ai\AiException;
-use BitApps\AiKit\Ai\Engine\EngineInterface;
 use BitApps\AiKit\Contract;
 use BitApps\AiKit\Kit;
 use BitApps\AiKit\Security\PiiMasker;
@@ -127,6 +126,25 @@ final class AssistantTest extends TestCase
         $sent = wp_json_encode($this->engine->calls[1]['messages']);
         self::assertStringContainsString('deleted', $sent);
         self::assertDoesNotMatchRegularExpression('/[a-f0-9]{32,}/', $sent, 'no confirmation token reaches the model');
+    }
+
+    public function testAnApprovalRunsTheActionOnceEvenWhenTheTurnFails(): void
+    {
+        $this->engine->script = [
+            ['text' => 'I will delete form 7.', 'tool_calls' => [['id' => 'd1', 'name' => 'delete-form', 'input' => ['form_id' => 7]]]],
+        ];
+        $this->assistant()->chat(self::ADMIN, 'Delete form 7');
+
+        // The model call after the action fails, so the turn is not stored...
+        $this->engine->fail = new \BitApps\AiKit\Ai\AiException('Provider down.', 'provider_error');
+        $failed = $this->assistant()->decide(self::ADMIN, true);
+        self::assertSame('provider_error', $failed['reason']);
+        self::assertSame(1, self::$deleted);
+
+        // ...but the action is not waiting any more: approving again runs nothing.
+        $this->engine->fail = null;
+        self::assertSame('no_pending', $this->assistant()->decide(self::ADMIN, true)['reason']);
+        self::assertSame(1, self::$deleted);
     }
 
     public function testWriteToolsAlsoWaitForTheUserInTheAssistant(): void
@@ -254,6 +272,45 @@ final class AssistantTest extends TestCase
         self::assertSame(0, $this->assistant()->history(self::ADMIN)['total']);
     }
 
+    public function testConversationsCanBeRenamedPinnedAndArchived(): void
+    {
+        $repository = new MemoryConversations();
+        Kit::reset();
+        Kit::boot($this->context(['services' => ['conversations' => $repository]]));
+        $this->engine->script = [['text' => 'One', 'tool_calls' => []], ['text' => 'Two', 'tool_calls' => []], ['text' => 'Three', 'tool_calls' => []]];
+
+        $first = $this->assistant()->chat(self::ADMIN, 'First topic', '', ['form_id' => 7])['conversation']['id'];
+        $this->assistant()->reset(self::ADMIN);
+        $second = $this->assistant()->chat(self::ADMIN, 'Second topic')['conversation']['id'];
+
+        $renamed = $this->assistant()->rename(self::ADMIN, $first, "  Contact <b>form</b>\n fixes  ");
+        self::assertArrayNotHasKey('error', $renamed);
+        self::assertSame('Contact form fixes', $repository->rows[$first]['title'], 'tags and whitespace are cleaned');
+        self::assertSame('not_found', $this->assistant()->rename(self::ADMIN, $first, '   ')['reason'], 'an empty title is refused');
+        self::assertSame('not_found', $this->assistant()->rename(99, $first, 'Mine now')['reason'], 'another user cannot rename it');
+
+        $this->assistant()->setFlags(self::ADMIN, $first, ['pinned' => true]);
+        $items = $this->assistant()->history(self::ADMIN)['items'];
+        self::assertSame([$first, $second], array_column($items, 'id'), 'pinned first, although older');
+        self::assertTrue($items[0]['pinned']);
+        self::assertSame(['form_id' => 7, 'pinned' => true], $repository->rows[$first]['context'], 'flags live beside the context');
+
+        $this->assistant()->open(self::ADMIN, $first);
+        $this->assistant()->chat(self::ADMIN, 'More on the first topic', '', ['form_id' => 7]);
+        self::assertTrue(!empty($repository->rows[$first]['context']['pinned']), 'a new turn keeps the flags');
+        self::assertTrue($this->assistant()->view(self::ADMIN)['conversation']['pinned']);
+
+        $this->assistant()->setFlags(self::ADMIN, $second, ['archived' => true]);
+        self::assertSame([$first], array_column($this->assistant()->history(self::ADMIN)['items'], 'id'));
+        $archived = $this->assistant()->history(self::ADMIN, '', 20, 0, true);
+        self::assertSame([$second], array_column($archived['items'], 'id'));
+        self::assertTrue($archived['items'][0]['archived']);
+
+        $this->assistant()->setFlags(self::ADMIN, $second, ['archived' => false, 'pinned' => false]);
+        self::assertSame([], $repository->rows[$second]['context'], 'cleared flags leave no trace');
+        self::assertSame('not_found', $this->assistant()->setFlags(self::ADMIN, 'nope', ['pinned' => true])['reason']);
+    }
+
     public function testWithoutAnEngineTheReasonIsShown(): void
     {
         $view = Kit::for('bit-demo')->assistant()->chat(self::ADMIN, 'Hi');
@@ -300,90 +357,5 @@ final class AssistantTest extends TestCase
         $engine = $this->engine;
 
         return Kit::for('bit-demo')->assistant(static fn () => $engine);
-    }
-}
-
-final class ScriptedEngine implements EngineInterface
-{
-    /** @var array<int, array<string, mixed>> */
-    public array $script = [];
-
-    /** @var array<int, array<string, mixed>> */
-    public array $calls = [];
-
-    public ?AiException $fail = null;
-
-    public function key(): string
-    {
-        return 'scripted';
-    }
-
-    public function label(): string
-    {
-        return 'Scripted';
-    }
-
-    public function send(array $messages, array $tools, string $system, array $options): array
-    {
-        $this->calls[] = ['messages' => $messages, 'tools' => $tools, 'system' => $system, 'options' => $options];
-        if (null !== $this->fail) {
-            throw $this->fail;
-        }
-
-        $next = array_shift($this->script) ?? ['text' => 'Done.', 'tool_calls' => []];
-
-        return $next + ['stop_reason' => [] === $next['tool_calls'] ? 'end_turn' : 'tool_use', 'usage' => ['input_tokens' => 10, 'output_tokens' => 5], 'raw' => null];
-    }
-}
-
-final class MemoryConversations implements \BitApps\AiKit\Ai\ConversationRepositoryInterface
-{
-    /** @var array<string, array<string, mixed>> */
-    public array $rows = [];
-
-    private int $next = 0;
-
-    public function find(int $userId, string $id): ?array
-    {
-        $row = $this->rows[$id] ?? null;
-
-        return null !== $row && $row['user'] === $userId ? $row + ['id' => $id] : null;
-    }
-
-    public function save(int $userId, ?string $id, string $title, array $messages, ?array $pending, array $context): string
-    {
-        $id = $id ?? (string) ++$this->next;
-        $this->rows[$id] = ['user' => $userId, 'title' => $title, 'messages' => $messages, 'pending' => $pending, 'context' => $context, 'created' => $this->rows[$id]['created'] ?? time(), 'updated' => time()];
-
-        return $id;
-    }
-
-    public function list(int $userId, string $search = '', int $limit = 20, int $offset = 0): array
-    {
-        $items = [];
-        foreach (array_reverse($this->rows, true) as $id => $row) {
-            if ($row['user'] === $userId && ('' === $search || false !== mb_stripos($row['title'], $search))) {
-                $items[] = ['id' => (string) $id, 'title' => $row['title'], 'context' => $row['context'], 'messages' => \count($row['messages']), 'created' => $row['created'], 'updated' => $row['updated']];
-            }
-        }
-
-        return ['items' => \array_slice($items, $offset, $limit), 'total' => \count($items)];
-    }
-
-    public function delete(int $userId, string $id): void
-    {
-        if (null !== $this->find($userId, $id)) {
-            unset($this->rows[$id]);
-        }
-    }
-
-    public function deleteAll(int $userId): void
-    {
-        $this->rows = array_filter($this->rows, static fn ($row) => $row['user'] !== $userId);
-    }
-
-    public function purgeOlderThan(int $seconds): int
-    {
-        return 0;
     }
 }

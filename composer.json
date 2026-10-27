@@ -24,23 +24,27 @@
       ".php-cs-fixer.cache",
       "composer.lock",
       "phpunit.xml",
+      "phpunit.integration.xml",
       "rector.php",
       "bin",
       "tests",
       "docs",
-      "CONTRIBUTING.md"
+      "CONTRIBUTING.md",
+      "frontend"
     ]
   },
   "require": {
     "php": ">=8.0",
-    "ext-json": "*"
+    "ext-json": "*",
+    "bitapps/wp-database": "^2.0"
   },
   "require-dev": {
-    "phpunit/phpunit": "^9.6",
+    "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
     "friendsofphp/php-cs-fixer": "^3.10",
     "phpcompatibility/phpcompatibility-wp": "*",
-    "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
-    "rector/rector": "^2.5"
+    "phpunit/phpunit": "^9.6",
+    "rector/rector": "^2.5",
+    "yoast/phpunit-polyfills": "^2.0"
   },
   "autoload": {
     "psr-4": {
@@ -66,7 +70,8 @@
       "@prefix-check",
       "@rector",
       "@test"
-    ]
+    ],
+    "test-integration": "phpunit --configuration phpunit.integration.xml"
   },
   "extra": {
     "branch-alias": {
