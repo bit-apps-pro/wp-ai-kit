@@ -465,7 +465,8 @@ function RecentActivity({ onViewAll }: { onViewAll?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const rows: AuditEvent[] = (activity.data?.rows || []).slice(0, 5)
+  // Until the narrowed query answers, the store may still hold the MCP screen's rows: show the assistant's only.
+  const rows: AuditEvent[] = (activity.data?.rows || []).filter(event => event.channel === 'assistant').slice(0, 5)
   const pending = status === 'idle' || (status === 'loading' && !activity.data)
 
   return (

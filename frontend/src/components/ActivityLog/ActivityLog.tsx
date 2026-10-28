@@ -17,7 +17,7 @@ export interface ActivityLogProps {
   resourceLabel?: string
   /** The cells of one row (`<td>`s) in place of the defaults; the row and its key stay the list's. */
   renderRow?: (event: AuditEvent) => ReactNode
-  /** The last few calls only, no filters or paging: the "Recent activity" card. */
+  /** The MCP screen's "Recent activity" card: the last few calls from connected apps (not the assistant), no filters or paging. */
   compact?: boolean
 }
 
@@ -48,7 +48,7 @@ function CompactLog({ limit, renderRow }: { limit: number, renderRow?: ActivityL
   const rows = (data?.recent || []).slice(0, limit)
 
   if (status === 'loading' || status === 'idle') return <div className="aikit-empty"><Spinner /></div>
-  if (rows.length === 0) return <p className="aikit-empty">{__('No calls yet.')}</p>
+  if (rows.length === 0) return <p className="aikit-empty">{__('No calls from connected apps yet.')}</p>
   return (
     <ul className="aikit aikit-activity__recent">
       {rows.map(row => (

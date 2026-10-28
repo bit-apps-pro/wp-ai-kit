@@ -56,6 +56,7 @@ use BitApps\AiKit\Tools\ToolRunner;
  */
 final class Kit
 {
+
     /** Expiry choices a settings screen offers, in days; null = never. */
     public const API_KEY_EXPIRY_DAYS = [7, 30, 90, 365, null];
 
@@ -635,7 +636,7 @@ final class Kit
             'endpoint'     => rest_url($this->context->restNamespace() . HttpTransport::ROUTE),
             'tools'        => $tools,
             'requirements' => RequirementsReport::checks(),
-            'recent'       => $this->auditLogger()->recent(20),
+            'recent'       => $this->recentOutsideCalls(20),
             'api_keys'     => [
                 'enabled'    => $this->features->isEnabled(FeatureFlags::API_KEYS),
                 'forced_off' => $this->features->isForcedOff(FeatureFlags::API_KEYS),
@@ -718,6 +719,36 @@ final class Kit
             $engineFactory ?? $this->engineFactory,
             $this->attachments()
         );
+    }
+
+    /** Files attached to assistant messages; null unless the plugin ships the assistant with attachments. */
+    public function attachments(): ?AttachmentStore
+    {
+        if (!$this->context->provides(PluginContext::FEATURE_ASSISTANT) || !$this->context->provides(PluginContext::FEATURE_ATTACHMENTS)) {
+            return null;
+        }
+
+        return $this->attachmentStore ??= new AttachmentStore($this->context);
+    }
+
+    /** init: keep the hourly removal of expired attachments scheduled. */
+    public function onAttachmentsInit(): void
+    {
+        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->attachmentsPurgeHook())) {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', $this->attachmentsPurgeHook());
+        }
+    }
+
+    /** The hourly purge of attachments older than their time to live. */
+    public function onPurgeAttachments(): void
+    {
+        $this->attachments()?->purgeExpired();
+    }
+
+    /** `{option_prefix}aikit_attachments_purge`: the cron hook of the attachment purge. */
+    public function attachmentsPurgeHook(): string
+    {
+        return $this->context->optionName('aikit_attachments_purge');
     }
 
     /**
@@ -854,36 +885,6 @@ final class Kit
         return $this->abilities;
     }
 
-    /** Files attached to assistant messages; null unless the plugin ships the assistant with attachments. */
-    public function attachments(): ?AttachmentStore
-    {
-        if (!$this->context->provides(PluginContext::FEATURE_ASSISTANT) || !$this->context->provides(PluginContext::FEATURE_ATTACHMENTS)) {
-            return null;
-        }
-
-        return $this->attachmentStore ??= new AttachmentStore($this->context);
-    }
-
-    /** init: keep the hourly removal of expired attachments scheduled. */
-    public function onAttachmentsInit(): void
-    {
-        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->attachmentsPurgeHook())) {
-            wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', $this->attachmentsPurgeHook());
-        }
-    }
-
-    /** The hourly purge of attachments older than their time to live. */
-    public function onPurgeAttachments(): void
-    {
-        $this->attachments()?->purgeExpired();
-    }
-
-    /** `{option_prefix}aikit_attachments_purge`: the cron hook of the attachment purge. */
-    public function attachmentsPurgeHook(): string
-    {
-        return $this->context->optionName('aikit_attachments_purge');
-    }
-
     /**
      * Mirror tools into the Abilities API (and the MCP Adapter) only while the
      * MCP server is on, and only when something will use them: the "offer as
@@ -932,6 +933,23 @@ final class Kit
         }
 
         (new WpMcpAdapterBridge($this->context, $this->abilities()))->createServer($adapter);
+    }
+
+    /**
+     * The last calls from outside the assistant (MCP, Abilities API, WP-CLI) for
+     * the MCP screen's summary; the assistant shows its own on its settings page.
+     * Read from a wider window so a busy assistant does not empty the list.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function recentOutsideCalls(int $limit): array
+    {
+        $rows = array_filter(
+            $this->auditLogger()->recent($limit * 10),
+            static fn ($row) => ToolContext::CHANNEL_ASSISTANT !== ($row['channel'] ?? '')
+        );
+
+        return \array_slice(array_values($rows), 0, $limit);
     }
 
     /**

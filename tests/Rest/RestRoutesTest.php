@@ -10,6 +10,7 @@ use BitApps\AiKit\Rest\RestRoutes;
 use BitApps\AiKit\Tests\Ai\MemoryConversations;
 use BitApps\AiKit\Tests\Ai\ScriptedEngine;
 use BitApps\AiKit\Tests\TestCase;
+use BitApps\AiKit\Tools\ToolContext;
 
 /**
  * The kit's admin REST routes (`<ns>/ai/*`): registration, permissions, the
@@ -340,7 +341,7 @@ final class RestRoutesTest extends TestCase
 
     public function testTheActivityLogPagesFiltersAndClears(): void
     {
-        $this->boot();
+        $kit = $this->boot();
         \AiKitTestState::$currentUser = self::MEMBER;
         $this->engine->script = [
             ['text' => '', 'tool_calls' => [['id' => 't1', 'name' => 'list-forms', 'input' => []], ['id' => 't2', 'name' => 'missing-tool', 'input' => []]]],
@@ -368,7 +369,12 @@ final class RestRoutesTest extends TestCase
         $mine = $this->call('GET', '/mcp/activity', [], ['user_id' => (string) self::MANAGER])->get_data();
         self::assertSame(2, $mine['total'], 'a member sees their own calls, whatever user they ask for');
         self::assertArrayNotHasKey('client_ref', $mine['filters']);
-        self::assertSame([self::MEMBER], array_unique(array_column($this->call('GET', '/mcp/state')->get_data()['recent'], 'user_id')));
+        self::assertSame([], $this->call('GET', '/mcp/state')->get_data()['recent'], "the MCP screen's summary leaves the assistant's calls to the assistant's screen");
+        foreach ([self::MEMBER, self::MANAGER] as $user) {
+            $kit->runner()->call('list-forms', [], new ToolContext(ToolContext::CHANNEL_MCP, $user, null, 'claude-desktop'));
+        }
+        $recent = $this->call('GET', '/mcp/state')->get_data()['recent'];
+        self::assertSame([['mcp', self::MEMBER]], array_map(static fn ($row) => [$row['channel'], $row['user_id']], $recent), 'connected apps only, a member\'s own');
         \AiKitTestState::$currentUser = self::MEMBER;
 
         self::assertSame(403, $this->permission('DELETE', '/mcp/activity')->get_error_data()['status'], 'clearing is for managers');
