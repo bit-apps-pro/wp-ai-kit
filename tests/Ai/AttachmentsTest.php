@@ -9,6 +9,7 @@ use BitApps\AiKit\Ai\Engine\EngineInterface;
 use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\Providers\ClaudeProvider;
 use BitApps\AiKit\Ai\Providers\GeminiProvider;
+use BitApps\AiKit\Ai\Providers\OpenAiProvider;
 use BitApps\AiKit\Contract;
 use BitApps\AiKit\Kit;
 use BitApps\AiKit\PluginContext;
@@ -223,10 +224,16 @@ final class AttachmentsTest extends TestCase
         self::assertSame(['text', 'image', 'document'], array_column($claude, 'type'));
         self::assertSame(['type' => 'base64', 'media_type' => 'application/pdf', 'data' => 'BBB'], $claude[2]['source']);
 
+        \AiKitTestState::$httpResponses[OpenAiProvider::ENDPOINT] = $reply + ['body' => json_encode(['choices' => [['message' => ['content' => 'ok']]]])];
+        (new OpenAiProvider('k'))->send([$message], [], 'S', ['model' => 'm']);
+        $openai = json_decode(\AiKitTestState::$httpRequests[1]['args']['body'], true)['messages'][1]['content'];
+        self::assertSame('data:image/png;base64,AAA', $openai[1]['image_url']['url']);
+        self::assertSame(['filename' => 'b.pdf', 'file_data' => 'data:application/pdf;base64,BBB'], $openai[2]['file']);
+
         $geminiUrl = GeminiProvider::ENDPOINT . 'm:generateContent';
         \AiKitTestState::$httpResponses[$geminiUrl] = $reply + ['body' => json_encode(['candidates' => [['content' => ['parts' => [['text' => 'ok']]]]]])];
         (new GeminiProvider('k'))->send([$message], [], 'S', ['model' => 'm']);
-        $gemini = json_decode(\AiKitTestState::$httpRequests[1]['args']['body'], true)['contents'][0]['parts'];
+        $gemini = json_decode(\AiKitTestState::$httpRequests[2]['args']['body'], true)['contents'][0]['parts'];
         self::assertSame(['mimeType' => 'application/pdf', 'data' => 'BBB'], $gemini[2]['inlineData']);
 
         $core = CoreAiClientEngine::toMessages([$message])[0]['parts'];

@@ -32,7 +32,7 @@ export interface TextInputProps {
   placeholder?: string
   disabled?: boolean
   autoFocus?: boolean
-  type?: 'text' | 'search' | 'password' | 'number' | 'email'
+  type?: 'text' | 'search' | 'password' | 'number' | 'email' | 'url'
   id?: string
   list?: string
   min?: number

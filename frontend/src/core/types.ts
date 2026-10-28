@@ -126,13 +126,15 @@ export interface ActivityQuery {
   to?: string
 }
 
-export type Provider = 'claude' | 'openai' | 'gemini'
+export type Provider = 'claude' | 'openai' | 'gemini' | 'openai_compatible'
 
 export interface AiSettings {
   enabled: boolean
   engine: 'auto' | 'wordpress' | 'provider'
   provider: Provider
   model: string
+  /** `openai_compatible` only: the service's API base, such as https://api.mistral.ai/v1. */
+  base_url?: string
   access_level: AccessLevel
   disabled_tools: string[]
   confirm_destructive: boolean

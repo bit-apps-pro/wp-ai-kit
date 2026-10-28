@@ -6,6 +6,7 @@ use BitApps\AiKit\Ai\AiException;
 use BitApps\AiKit\Ai\Engine\CoreAiClientEngine;
 use BitApps\AiKit\Ai\Providers\ClaudeProvider;
 use BitApps\AiKit\Ai\Providers\GeminiProvider;
+use BitApps\AiKit\Ai\Providers\OpenAiCompatibleProvider;
 use BitApps\AiKit\Ai\Providers\OpenAiProvider;
 use BitApps\AiKit\Tests\TestCase;
 
@@ -48,6 +49,93 @@ final class EnginesTest extends TestCase
         self::assertSame('You have 2 forms.', $result['text']);
         self::assertSame([['id' => 'tu1', 'name' => 'get-form', 'input' => ['form_id' => 1]]], $result['tool_calls']);
         self::assertSame(['input_tokens' => 50, 'output_tokens' => 9], $result['usage']);
+    }
+
+    public function testOpenAiCompatibleSendsToItsBaseUrl(): void
+    {
+        \AiKitTestState::$httpResponses['https://api.mistral.ai/v1/chat/completions'] = ['response' => ['code' => 200], 'body' => json_encode([
+            'choices' => [['message' => ['content' => 'Two forms.'], 'finish_reason' => 'stop']],
+            'usage'   => ['prompt_tokens' => 12, 'completion_tokens' => 3],
+        ])];
+
+        $engine = new OpenAiCompatibleProvider('mk-1', 'https://api.mistral.ai/v1');
+        $result = $engine->send(self::TRANSCRIPT, self::TOOLS, 'System.', ['model' => 'mistral-large-latest', 'max_tokens' => 100]);
+        $request = \AiKitTestState::$httpRequests[0];
+        $body = json_decode($request['args']['body'], true);
+
+        self::assertSame('https://api.mistral.ai/v1/chat/completions', $request['url']);
+        self::assertSame('Bearer mk-1', $request['args']['headers']['authorization']);
+        self::assertSame(100, $body['max_tokens'], 'compatible services read max_tokens');
+        self::assertArrayNotHasKey('max_completion_tokens', $body);
+        self::assertSame('tool', $body['messages'][3]['role']);
+        self::assertSame('Two forms.', $result['text']);
+        self::assertSame('api.mistral.ai', $engine->label());
+    }
+
+    public function testChatCompletionsStreamTextAndToolCalls(): void
+    {
+        $events = [
+            ['choices' => [['delta' => ['role' => 'assistant', 'content' => 'You have ']]]],
+            ['choices' => [['delta' => ['content' => '2 forms.']]]],
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'id' => 'call_1', 'type' => 'function', 'function' => ['name' => 'get-form', 'arguments' => '{"form']]]]]]],
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'function' => ['arguments' => '_id":1}']]]]]]],
+            ['choices' => [], 'usage' => ['prompt_tokens' => 30, 'completion_tokens' => 7]],
+        ];
+        $body = implode('', array_map(static fn ($event) => 'data: ' . json_encode($event) . "\n\n", $events)) . "data: [DONE]\n\n";
+        // Chunk borders fall anywhere, also inside a line.
+        \AiKitTestState::$httpResponses[OpenAiProvider::ENDPOINT] = ['response' => ['code' => 200], 'body' => $body, 'chunks' => str_split($body, 17)];
+
+        $pieces = [];
+        $result = (new OpenAiProvider('sk-oa'))->stream(self::TRANSCRIPT, self::TOOLS, 'System.', ['model' => 'gpt-5.4', 'max_tokens' => 100], static function (string $delta) use (&$pieces): void {
+            $pieces[] = $delta;
+        });
+        $sent = json_decode(\AiKitTestState::$httpRequests[0]['args']['body'], true);
+
+        self::assertTrue($sent['stream']);
+        self::assertTrue($sent['stream_options']['include_usage']);
+        self::assertSame(['You have ', '2 forms.'], $pieces);
+        self::assertSame('You have 2 forms.', $result['text']);
+        self::assertSame([['id' => 'call_1', 'name' => 'get-form', 'input' => ['form_id' => 1]]], $result['tool_calls']);
+        self::assertSame(['input_tokens' => 30, 'output_tokens' => 7], $result['usage']);
+    }
+
+    public function testClaudeStreamsTextAndToolInput(): void
+    {
+        $events = [
+            ['type' => 'message_start', 'message' => ['usage' => ['input_tokens' => 40, 'output_tokens' => 1]]],
+            ['type' => 'content_block_start', 'index' => 0, 'content_block' => ['type' => 'text', 'text' => '']],
+            ['type' => 'content_block_delta', 'index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'Checking ']],
+            ['type' => 'content_block_delta', 'index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'form 1.']],
+            ['type' => 'content_block_stop', 'index' => 0],
+            ['type' => 'content_block_start', 'index' => 1, 'content_block' => ['type' => 'tool_use', 'id' => 'tu1', 'name' => 'get-form', 'input' => []]],
+            ['type' => 'content_block_delta', 'index' => 1, 'delta' => ['type' => 'input_json_delta', 'partial_json' => '{"form_id"']],
+            ['type' => 'content_block_delta', 'index' => 1, 'delta' => ['type' => 'input_json_delta', 'partial_json' => ':1}']],
+            ['type' => 'content_block_stop', 'index' => 1],
+            ['type' => 'message_delta', 'delta' => ['stop_reason' => 'tool_use'], 'usage' => ['output_tokens' => 12]],
+            ['type' => 'message_stop'],
+        ];
+        $body = implode('', array_map(static fn ($event) => 'event: ' . $event['type'] . "\ndata: " . json_encode($event) . "\n\n", $events));
+        \AiKitTestState::$httpResponses[ClaudeProvider::ENDPOINT] = ['response' => ['code' => 200], 'body' => $body, 'chunks' => str_split($body, 23)];
+
+        $pieces = [];
+        $result = (new ClaudeProvider('sk-ant'))->stream(self::TRANSCRIPT, self::TOOLS, 'System.', ['model' => 'claude-sonnet-5-5', 'max_tokens' => 100], static function (string $delta) use (&$pieces): void {
+            $pieces[] = $delta;
+        });
+
+        self::assertSame(['Checking ', 'form 1.'], $pieces);
+        self::assertSame('Checking form 1.', $result['text']);
+        self::assertSame([['id' => 'tu1', 'name' => 'get-form', 'input' => ['form_id' => 1]]], $result['tool_calls']);
+        self::assertSame('tool_use', $result['stop_reason']);
+        self::assertSame(['input_tokens' => 40, 'output_tokens' => 12], $result['usage']);
+    }
+
+    public function testAStreamedErrorIsReportedAsTheProviderSaysIt(): void
+    {
+        \AiKitTestState::$httpResponses[ClaudeProvider::ENDPOINT] = ['response' => ['code' => 401], 'body' => json_encode(['error' => ['type' => 'authentication_error', 'message' => 'invalid x-api-key']])];
+
+        $this->expectException(AiException::class);
+        $this->expectExceptionMessage('invalid x-api-key');
+        (new ClaudeProvider('bad'))->stream(self::TRANSCRIPT, [], 'System.', ['model' => 'm'], static fn () => null);
     }
 
     public function testOpenAi(): void

@@ -9,6 +9,7 @@ use BitApps\AiKit\Ai\Engine\EngineInterface;
 use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\Providers\ClaudeProvider;
 use BitApps\AiKit\Ai\Providers\GeminiProvider;
+use BitApps\AiKit\Ai\Providers\OpenAiCompatibleProvider;
 use BitApps\AiKit\Ai\Providers\OpenAiProvider;
 use BitApps\AiKit\PluginContext;
 use BitApps\AiKit\Security\RateLimiter;
@@ -73,6 +74,14 @@ final class Assistant
             return ['engine' => null, 'reason' => 'auto' === $mode
                 ? 'Set up an AI provider in WordPress Settings → Connectors, or save an API key in the AI engine section of the assistant settings.'
                 : 'Save an API key for the chosen provider in the AI engine section of the assistant settings.'];
+        }
+
+        if (OpenAiCompatibleProvider::KEY === $provider) {
+            if ('' === (string) $settings['base_url'] || '' === (string) $settings['model']) {
+                return ['engine' => null, 'reason' => 'Set the base URL and the model name of the OpenAI-compatible service in the AI engine section of the assistant settings.'];
+            }
+
+            return ['engine' => new OpenAiCompatibleProvider($key, (string) $settings['base_url']), 'reason' => null];
         }
 
         return match ($provider) {

@@ -19,20 +19,24 @@ final class AiSettings
 {
     public const ENGINES = ['auto', 'wordpress', 'provider'];
 
-    public const PROVIDERS = ['claude', 'openai', 'gemini'];
+    public const PROVIDERS = ['claude', 'openai', 'gemini', 'openai_compatible'];
 
     /** Suggestions for the model field; any model name the provider accepts can be typed. */
     public const SUGGESTED_MODELS = [
         'claude' => ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'],
         'openai' => ['gpt-5.4', 'gpt-5.4-mini', 'gpt-4.1'],
         'gemini' => ['gemini-3.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+        // The service decides: its model name must be typed.
+        'openai_compatible' => [],
     ];
 
     public const DEFAULTS = [
-        'enabled'             => false,
-        'engine'              => 'auto',
-        'provider'            => 'claude',
-        'model'               => '',
+        'enabled'  => false,
+        'engine'   => 'auto',
+        'provider' => 'claude',
+        'model'    => '',
+        // openai_compatible only: the API base, up to (not including) /chat/completions.
+        'base_url'            => '',
         'access_level'        => Scopes::READ,
         'disabled_tools'      => [],
         'confirm_destructive' => true,
@@ -120,12 +124,20 @@ final class AiSettings
     {
         $input = \is_object($input) ? (array) json_decode((string) wp_json_encode($input), true) : $input;
         $settings = $this->read();
+        $before = $settings;
 
         if (\is_array($input)) {
             foreach (self::DEFAULTS as $key => $default) {
                 if (\array_key_exists($key, $input)) {
-                    $settings[$key] = $this->clean($key, $input[$key], $default, $knownTools);
+                    $clean = $this->clean($key, $input[$key], $default, $knownTools);
+                    // null: refused (a base URL that cannot be used); the saved value stays.
+                    $settings[$key] = $clean ?? $settings[$key];
                 }
+            }
+
+            // The compatible provider's key belongs to its URL: a new URL needs the key typed again.
+            if ($settings['base_url'] !== $before['base_url']) {
+                $this->storeKey('openai_compatible', '');
             }
 
             $provider = (string) $settings['provider'];
@@ -141,6 +153,44 @@ final class AiSettings
         }
 
         return $settings;
+    }
+
+    /**
+     * Why a base URL cannot be used, or null: https only, a public host (no local
+     * or private address: wp_http_validate_url()), no credentials, query or fragment.
+     * Empty is allowed (not set).
+     *
+     * @param mixed $url
+     */
+    public static function baseUrlError($url): ?string
+    {
+        if (!\is_string($url)) {
+            return 'The base URL must be text.';
+        }
+        $url = trim($url);
+        if ('' === $url) {
+            return null;
+        }
+        $parts = wp_parse_url($url);
+        if (!\is_array($parts) || 'https' !== strtolower((string) ($parts['scheme'] ?? '')) || empty($parts['host'])) {
+            return 'Use an https:// address, such as https://api.mistral.ai/v1.';
+        }
+        if (isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return 'Leave sign-in details, ? and # out of the base URL; the API key goes in its own field.';
+        }
+        if (\function_exists('wp_http_validate_url') && false === wp_http_validate_url($url)) {
+            return 'This address is local or private, so the site will not send your data there.';
+        }
+
+        return null;
+    }
+
+    private static function normalBaseUrl(string $url): string
+    {
+        $url = rtrim(trim($url), '/');
+
+        // A pasted full endpoint works too.
+        return (string) preg_replace('#/chat/completions$#', '', $url);
     }
 
     private function storeKey(string $provider, string $key): void
@@ -177,6 +227,10 @@ final class AiSettings
 
             case 'access_level':
                 return \in_array($value, Scopes::levels(), true) ? $value : $default;
+
+            case 'base_url':
+                // An unusable URL keeps the saved one; the REST save refuses it first with the reason.
+                return null === self::baseUrlError($value) ? self::normalBaseUrl((string) $value) : null;
 
             case 'model':
                 return \is_string($value) && preg_match('/^[A-Za-z0-9._:\/-]{0,100}$/', trim($value)) ? trim($value) : $default;

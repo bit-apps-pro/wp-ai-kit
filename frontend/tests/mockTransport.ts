@@ -99,8 +99,8 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
 
   const assistantState: AssistantState = {
     settings: { enabled: true, engine: 'auto', provider: 'claude', model: '', access_level: 'write', disabled_tools: [], confirm_destructive: true, allow_personal_data: false, max_turns: 6, daily_messages: 300, history_days: 30 },
-    keys: { claude: { set: true, hint: '…ab12' }, openai: { set: false, hint: '' }, gemini: { set: false, hint: '' } },
-    suggested_models: { claude: ['claude-sonnet-5-5'], openai: ['gpt-5'], gemini: ['gemini-2.5-pro'] },
+    keys: { claude: { set: true, hint: '…ab12' }, openai: { set: false, hint: '' }, gemini: { set: false, hint: '' }, openai_compatible: { set: false, hint: '' } },
+    suggested_models: { claude: ['claude-sonnet-5-5'], openai: ['gpt-5'], gemini: ['gemini-2.5-pro'], openai_compatible: [] },
     forced_off: false,
     wordpress_ai: false,
     wordpress_ai_api: true,

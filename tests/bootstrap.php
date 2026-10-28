@@ -545,6 +545,25 @@ function get_bloginfo($show = '', $filter = 'raw')
     return 'name' === $show ? 'Example Site' : '';
 }
 
+function wp_parse_url($url, $component = -1)
+{
+    return parse_url($url, $component);
+}
+
+/** As core: false for a local or private host (no DNS here: literal addresses and localhost only). */
+function wp_http_validate_url($url)
+{
+    $host = (string) parse_url($url, PHP_URL_HOST);
+    if ('' === $host || 'localhost' === strtolower($host)) {
+        return false;
+    }
+    if (false !== filter_var($host, FILTER_VALIDATE_IP) && false === filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+        return false;
+    }
+
+    return $url;
+}
+
 function wp_safe_remote_post($url, $args = [])
 {
     AiKitTestState::$httpRequests[] = ['url' => $url, 'args' => $args];
