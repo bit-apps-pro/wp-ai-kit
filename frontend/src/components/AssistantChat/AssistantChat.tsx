@@ -103,6 +103,8 @@ export default function AssistantChat({
   const attachmentRules = attachmentsOn ? bootstrap.attachments : null
   const bottom = useRef<HTMLDivElement>(null)
   const { messages, pending, busy, loaded, error, engine, engineReason, draft, conversation, extra, live } = assistant
+  const lastReply = [...messages].reverse().find(message => message.role === 'assistant' && !message.optimistic)?.text || ''
+  const announcement = busy ? __('The assistant is answering…') : (error || pending?.title || lastReply).slice(0, 400)
   const blocked = switchBlockedReason || ''
   const settingsLink = settingsHref ?? bootstrap.settingsUrl ?? undefined
 
@@ -259,7 +261,10 @@ export default function AssistantChat({
         </header>
       )}
 
-      <div className="aikit-chat__body" aria-live="polite">
+      {/* Screen readers hear a finished reply once, not every streamed word. */}
+      <div className="aikit-sr-only" role="status" aria-live="polite">{announcement}</div>
+
+      <div className="aikit-chat__body">
         {loaded && messages.length === 0 && !error && (
           <div className="aikit-chat__empty">
             {emptyState ?? <p>{__('Ask about this site. The assistant uses the same tools and limits as connected AI apps.')}</p>}

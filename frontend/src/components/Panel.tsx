@@ -26,8 +26,14 @@ export default function Panel({ open, onClose, size = 'compact', header, footer,
   const { __ } = useI18n()
   const root = useRef<HTMLElement>(null)
 
+  // Opened, the panel takes focus; closed, it goes back to what opened it (the launcher, say).
   useEffect(() => {
-    if (open) root.current?.focus()
+    if (!open) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    root.current?.focus()
+    return () => {
+      if (opener?.isConnected && !opener.contains(document.activeElement)) opener.focus()
+    }
   }, [open])
 
   if (!open) return null

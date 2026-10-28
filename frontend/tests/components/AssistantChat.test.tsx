@@ -6,6 +6,9 @@ import { aiKitBus } from '../../src/core/bus'
 import { AiKitProvider } from '../../src/core/context'
 import { createMockTransport, type MockOptions, sampleBootstrap } from '../mockTransport'
 
+/** The transcript, not the screen-reader status that repeats the last reply. */
+const inBody = { selector: '.aikit-chat__body *' }
+
 function renderChat(options: MockOptions = {}, props: Parameters<typeof AssistantChat>[0] = {}) {
   const mock = createMockTransport(options)
   render(
@@ -74,7 +77,7 @@ describe('AssistantChat', () => {
       </AiKitProvider>,
     )
 
-    expect(await screen.findByText('Form 93 got the most.')).toBeInTheDocument()
+    expect(await screen.findByText('Form 93 got the most.', inBody)).toBeInTheDocument()
     expect(container.querySelectorAll('.aikit-chat__bubble--assistant')).toHaveLength(1)
     expect(screen.getByText('Used List forms, Search entries ×4')).toBeInTheDocument()
     expect(screen.getByText('· 1 failed')).toBeInTheDocument()
@@ -107,7 +110,7 @@ describe('AssistantChat', () => {
     const user = userEvent.setup()
     const mock = renderChat({}, { context: () => ({ screen: 'dashboard' }), suggestions: ['What changed today?'] })
     await user.click(await screen.findByRole('button', { name: 'What changed today?' }))
-    expect(await screen.findByText('You said: What changed today?')).toBeInTheDocument()
+    expect(await screen.findByText('You said: What changed today?', inBody)).toBeInTheDocument()
     const chat = mock.calls.find(call => call.action === 'assistant/chat')
     expect(chat?.payload.context).toEqual({ screen: 'dashboard' })
   })
@@ -127,7 +130,7 @@ describe('AssistantChat', () => {
     expect(input()).toBeDisabled()
 
     await user.click(within(card).getByRole('button', { name: 'Allow' }))
-    expect(await screen.findByText('Renamed.')).toBeInTheDocument()
+    expect(await screen.findByText('Renamed.', inBody)).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'pending', name: 'rename-form' }))
     expect(onEvent).toHaveBeenCalledWith({ type: 'approved', name: 'rename-form' })
@@ -175,10 +178,10 @@ describe('AssistantChat', () => {
         <AssistantChat onEvent={onEvent} />
       </AiKitProvider>,
     )
-    expect(await screen.findByText('old answer')).toBeInTheDocument()
+    expect(await screen.findByText('old answer', inBody)).toBeInTheDocument()
     act(() => aiKitBus('bit-demo').open({ message: 'Build a survey', newChat: true }))
-    expect(await screen.findByText('You said: Build a survey')).toBeInTheDocument()
-    expect(screen.queryByText('old answer')).not.toBeInTheDocument()
+    expect(await screen.findByText('You said: Build a survey', inBody)).toBeInTheDocument()
+    expect(screen.queryByText('old answer', inBody)).not.toBeInTheDocument()
     expect(mock.calls.map(call => call.action)).toContain('assistant/reset')
     expect(onEvent).toHaveBeenCalledWith({ type: 'open', detail: { message: 'Build a survey', newChat: true } })
   })
@@ -193,15 +196,15 @@ describe('AssistantChat', () => {
       </AiKitProvider>
     )
     const { rerender } = render(view('Apply or discard the preview first.'))
-    expect(await screen.findByText('old answer')).toBeInTheDocument()
+    expect(await screen.findByText('old answer', inBody)).toBeInTheDocument()
 
     act(() => aiKitBus('bit-demo').open({ message: 'Build a survey', newChat: true }))
     expect(await screen.findByText(/Your request starts a new chat then/)).toBeInTheDocument()
     expect(mock.calls.some(call => call.action === 'assistant/chat' || call.action === 'assistant/reset')).toBe(false)
 
     rerender(view(undefined))
-    expect(await screen.findByText('You said: Build a survey')).toBeInTheDocument()
-    expect(screen.queryByText('old answer')).not.toBeInTheDocument()
+    expect(await screen.findByText('You said: Build a survey', inBody)).toBeInTheDocument()
+    expect(screen.queryByText('old answer', inBody)).not.toBeInTheDocument()
     expect(mock.conversations.get('old')?.messages).toHaveLength(2)
   })
 

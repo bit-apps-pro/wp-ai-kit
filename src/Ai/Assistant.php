@@ -28,6 +28,9 @@ final class Assistant
 {
     public const MAX_MESSAGE_CHARS = 4000;
 
+    /** Longest a turn holds the user's lock if PHP never got to release it. */
+    private const TURN_LOCK_SECONDS = 900;
+
     /** @var null|callable(array<string, mixed>): void */
     private $progress;
 
@@ -126,59 +129,13 @@ final class Assistant
             return $this->failure($userId, 'That message is too long (' . self::MAX_MESSAGE_CHARS . ' characters at most).', 'message_too_long');
         }
 
-        $conversation = $this->store->load($userId);
-        if (null !== $conversation['pending']) {
-            return $this->failure($userId, 'Confirm or cancel the waiting action first.', 'pending_confirmation');
-        }
-
-        $ready = $this->ready($userId);
-        if (isset($ready['error'])) {
-            return $ready;
-        }
-
-        // Checked before the daily budget counts the turn.
-        $attached = $this->attachedFiles($userId, $attachmentIds, $ready['engine']);
-        if (isset($attached['error'])) {
-            return $this->failure($userId, (string) $attached['error'], (string) $attached['reason']);
-        }
-
-        $limited = $this->overDailyLimit($userId);
-        if (null !== $limited) {
-            return $limited;
-        }
-
-        $messages = $conversation['messages'];
-        $messages[] = ['role' => 'user', 'content' => $message, 'at' => time()] + ([] === $attached ? [] : ['attachments' => $attached]);
-
-        return $this->execute($userId, $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->run($messages, $system, $call), $context);
+        return $this->exclusive($userId, fn () => $this->send($userId, $message, $pageContext, $context, $attachmentIds));
     }
 
     /** Approve or cancel the action the assistant is waiting on. */
     public function decide(int $userId, bool $approve, string $pageContext = ''): array
     {
-        $conversation = $this->store->load($userId);
-        $pending = $conversation['pending'];
-        if (null === $pending) {
-            return $this->failure($userId, 'Nothing is waiting for confirmation.', 'no_pending');
-        }
-
-        $ready = $this->ready($userId);
-        if (isset($ready['error'])) {
-            return $ready;
-        }
-
-        // A decision runs more model calls on the site's key, so it counts like a message.
-        $limited = $this->overDailyLimit($userId);
-        if (null !== $limited) {
-            return $limited;
-        }
-
-        $messages = $conversation['messages'];
-        // Taken off the conversation before it runs: a second approval sent at the same
-        // time, or after a failed turn, finds nothing to run instead of running it twice.
-        $this->store->save($userId, $messages, null);
-
-        return $this->execute($userId, $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->resume($messages, $pending, $approve, $system, $call));
+        return $this->exclusive($userId, fn () => $this->settle($userId, $approve, $pageContext));
     }
 
     /** Start a new conversation; the current one stays in the history. */
@@ -316,6 +273,75 @@ final class Assistant
     }
 
     /**
+     * chat() while the user's turn lock is held.
+     *
+     * @param array<string, mixed> $context
+     * @param string[]             $attachmentIds
+     *
+     * @return array<string, mixed>
+     */
+    private function send(int $userId, string $message, string $pageContext, array $context, array $attachmentIds): array
+    {
+        $conversation = $this->store->load($userId);
+        if (null !== $conversation['pending']) {
+            return $this->failure($userId, 'Confirm or cancel the waiting action first.', 'pending_confirmation');
+        }
+
+        $ready = $this->ready($userId);
+        if (isset($ready['error'])) {
+            return $ready;
+        }
+
+        // Checked before the daily budget counts the turn.
+        $attached = $this->attachedFiles($userId, $attachmentIds, $ready['engine']);
+        if (isset($attached['error'])) {
+            return $this->failure($userId, (string) $attached['error'], (string) $attached['reason']);
+        }
+
+        $limited = $this->overDailyLimit($userId);
+        if (null !== $limited) {
+            return $limited;
+        }
+
+        $messages = $conversation['messages'];
+        $messages[] = ['role' => 'user', 'content' => $message, 'at' => time()] + ([] === $attached ? [] : ['attachments' => $attached]);
+
+        return $this->execute($userId, $conversation['id'], $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->run($messages, $system, $call), $context);
+    }
+
+    /**
+     * decide() while the user's turn lock is held.
+     *
+     * @return array<string, mixed>
+     */
+    private function settle(int $userId, bool $approve, string $pageContext): array
+    {
+        $conversation = $this->store->load($userId);
+        $pending = $conversation['pending'];
+        if (null === $pending) {
+            return $this->failure($userId, 'Nothing is waiting for confirmation.', 'no_pending');
+        }
+
+        $ready = $this->ready($userId);
+        if (isset($ready['error'])) {
+            return $ready;
+        }
+
+        // A decision runs more model calls on the site's key, so it counts like a message.
+        $limited = $this->overDailyLimit($userId);
+        if (null !== $limited) {
+            return $limited;
+        }
+
+        $messages = $conversation['messages'];
+        // Taken off the conversation before it runs: a second approval sent at the same
+        // time, or after a failed turn, finds nothing to run instead of running it twice.
+        $this->store->saveTo($userId, $conversation['id'], $messages, null);
+
+        return $this->execute($userId, $conversation['id'], $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->resume($messages, $pending, $approve, $system, $call));
+    }
+
+    /**
      * Engine and access checks shared by chat() and decide().
      *
      * @return array<string, mixed> ['engine' => EngineInterface] or a failure
@@ -342,7 +368,7 @@ final class Assistant
      * @param callable(AgentLoop, string, ToolContext): array<string, mixed> $step
      * @param array<string, mixed>                                           $context
      */
-    private function execute(int $userId, EngineInterface $engine, array $messages, string $pageContext, callable $step, array $context = []): array
+    private function execute(int $userId, ?string $conversationId, EngineInterface $engine, array $messages, string $pageContext, callable $step, array $context = []): array
     {
         $settings = $this->settings->read();
         if (null !== $this->attachments) {
@@ -355,13 +381,21 @@ final class Assistant
         try {
             $outcome = $step($loop, $this->systemPrompt($userId, $pageContext), $call);
         } catch (AiException $error) {
-            // Nothing is saved: the user can send the same message again.
+            // Tools that already ran changed the site: keep them, so the chat shows what
+            // happened and the next message is not sent without their results. With
+            // nothing run, nothing is saved: the user can send the same message again.
+            $completed = $loop->completed();
+            if ([] !== $completed) {
+                $this->store->saveTo($userId, $conversationId, array_merge($messages, $completed), null, $context);
+            }
+
             return $this->failure($userId, $error->getMessage(), $error->reason());
         }
 
         // A paused turn's assistant message is in `messages`; its results wait in `pending`.
+        // Saved to the conversation the turn began in, even if the user opened another meanwhile.
         $transcript = array_merge($messages, $outcome['messages']);
-        $this->store->save($userId, $transcript, $outcome['pending'], $context);
+        $this->store->saveTo($userId, $conversationId, $transcript, $outcome['pending'], $context);
 
         return $this->view($userId) + ['usage' => $outcome['usage'], 'stop_reason' => $outcome['stop_reason']];
     }
@@ -378,7 +412,7 @@ final class Assistant
             . "- Look things up with the tools; never invent IDs, numbers, field names or settings.\n"
             . "- Do only what the user asked. Before a change, say briefly what you will do. Actions that cannot be undone are confirmed by the user in the chat; the tool result tells you when you are waiting.\n"
             . "- Personal data in tool results may be masked (for example j***@example.com). Do not try to recover it.\n"
-            . "- Keep answers short and concrete: short paragraphs or lists, with the form or entry IDs you used.\n"
+            . "- Keep answers short and concrete: short paragraphs or lists, naming the IDs of the records you used.\n"
             . '- ' . UntrustedContent::GUIDANCE . "\n\n"
             . 'Today is ' . gmdate('l, j F Y') . ' (UTC).';
 
@@ -454,6 +488,35 @@ final class Assistant
             foreach ((array) ($entry['attachments'] ?? []) as $file) {
                 $this->attachments->delete($userId, (string) ($file['id'] ?? ''));
             }
+        }
+    }
+
+    /**
+     * Run one turn of the user's at a time. Two tabs sending at once would both
+     * build on the same transcript and the later save would drop the other's turn;
+     * the second one is turned away instead. The lock also goes if PHP stops
+     * mid-turn (a fatal error, a time limit), and it expires on its own.
+     *
+     * @param callable(): array<string, mixed> $turn
+     *
+     * @return array<string, mixed>
+     */
+    private function exclusive(int $userId, callable $turn): array
+    {
+        $key = $this->context->optionName('ai_turn_' . $userId);
+        if (false !== get_transient($key)) {
+            return $this->failure($userId, 'The assistant is still answering your previous message. Wait for it to finish, then send this one.', 'turn_running');
+        }
+        set_transient($key, time(), self::TURN_LOCK_SECONDS);
+        $release = static function () use ($key) {
+            delete_transient($key);
+        };
+        register_shutdown_function($release);
+
+        try {
+            return $turn();
+        } finally {
+            $release();
         }
     }
 

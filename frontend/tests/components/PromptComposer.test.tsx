@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -35,6 +35,27 @@ describe('PromptComposer', () => {
     expect(onSubmit).not.toHaveBeenCalled()
     await user.keyboard('{Enter}')
     expect(onSubmit).toHaveBeenCalledWith('first\nsecond', { mentions: [] })
+  })
+
+  it('does not send on the Enter that ends an input method composition', async () => {
+    const user = userEvent.setup()
+    const { onSubmit, input } = renderComposer()
+    await user.type(input, 'こんにちは')
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })
+    expect(onSubmit).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledWith('こんにちは', { mentions: [] })
+  })
+
+  it('points screen readers at the highlighted row of the @ menu', async () => {
+    const user = userEvent.setup()
+    const { input } = renderComposer({ mentions })
+    await user.type(input, '@')
+    const rows = await screen.findAllByRole('option')
+    expect(input).toHaveAttribute('aria-activedescendant', rows[0].id)
+    await user.keyboard('{ArrowDown}')
+    expect(input).toHaveAttribute('aria-activedescendant', rows[1].id)
   })
 
   it('does not send while busy or empty', async () => {

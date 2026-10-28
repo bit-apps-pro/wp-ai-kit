@@ -246,11 +246,11 @@ export function createRestTransport(options: RestTransportOptions): Transport {
         }
         if (buffer.trim()) handle(buffer.replace(/\r/g, ''))
       } catch (cause) {
-        throw new AiKitError('The reply was cut off. The conversation was still saved; reload it to see the answer.', 'stream_interrupted', 0, cause)
+        throw new AiKitError('The reply was cut off. Reload the chat to see what was saved; send your message again if it is missing.', 'stream_interrupted', 0, cause)
       }
 
       const finished = done as { status: number, view: ChatView } | null
-      if (!finished) throw new AiKitError('The reply was cut off. The conversation was still saved; reload it to see the answer.', 'stream_interrupted', 0, null)
+      if (!finished) throw new AiKitError('The reply was cut off. Reload the chat to see what was saved; send your message again if it is missing.', 'stream_interrupted', 0, null)
       if (finished.status >= 400) throw errorFrom(finished.status, finished.view)
       return finished.view
     },

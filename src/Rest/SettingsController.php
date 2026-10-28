@@ -18,7 +18,14 @@ final class SettingsController
     /** @param \WP_REST_Request $request */
     public function assistant($request)
     {
-        return Response::ok($this->kit->assistantState());
+        $state = $this->kit->assistantState();
+        if (!$this->kit->context()->canManage((int) get_current_user_id())) {
+            // Only who may change them sees the keys' last characters and the gateway the assistant calls.
+            $state['keys'] = array_map(static fn ($key) => ['set' => \is_array($key) && !empty($key['set']), 'hint' => ''], (array) ($state['keys'] ?? []));
+            $state['settings']['base_url'] = '';
+        }
+
+        return Response::ok($state);
     }
 
     /** @param \WP_REST_Request $request */

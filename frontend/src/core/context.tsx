@@ -77,6 +77,11 @@ export function useI18n(): I18n {
   return useAiKit().i18n
 }
 
+/** useI18n() that also works outside a provider (a slot component rendered on its own): English then. */
+export function useI18nOptional(): I18n {
+  return useContext(AiKitContext)?.i18n ?? defaultI18n
+}
+
 /** Optional parts a plugin can leave out (PluginContext `features`). */
 export type OptionalFeature = 'audit' | 'history' | 'oauth' | 'apiKeys' | 'abilities' | 'mcpAdapter'
 

@@ -230,6 +230,8 @@ export default function PromptComposer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter while an input method (Japanese, Chinese, Korean…) is composing picks the word, it does not send.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (menu && rows.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
@@ -295,6 +297,7 @@ export default function PromptComposer({
           {rows.map((row, i) => (
             <li
               key={row.id}
+              id={`${menuId}-${i}`}
               role="option"
               aria-selected={i === active}
               className={['aikit-composer__menu-row', i === active ? 'aikit-composer__menu-row--active' : ''].join(' ').trim()}
@@ -361,6 +364,8 @@ export default function PromptComposer({
           aria-autocomplete="list"
           aria-controls={menu ? menuId : undefined}
           aria-expanded={!!menu}
+          // Screen readers announce the highlighted row while the caret stays in the message.
+          aria-activedescendant={menu && rows.length ? `${menuId}-${active}` : undefined}
           disabled={disabled}
           autoFocus={autoFocus}
           onChange={(e) => {

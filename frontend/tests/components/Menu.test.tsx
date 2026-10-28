@@ -1,9 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultComponents } from '../../src/components/slots/defaultComponents'
 
-const { Menu } = defaultComponents
+const { Menu, Modal } = defaultComponents
 
 function rect(top: number, left: number, width: number, height: number): DOMRect {
   return { top, left, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) } as DOMRect
@@ -38,5 +38,29 @@ describe('default Menu', () => {
     layout(window.innerHeight - 40)
     const list = await openMenu()
     expect(list.style.top).toBe(`${window.innerHeight - 40 - 4 - 120}px`)
+  })
+})
+
+describe('default Modal', () => {
+  it('asks to close once on Escape and gives focus back to what opened it', () => {
+    const onClose = vi.fn()
+    const view = (open: boolean) => (
+      <>
+        <button type="button">Delete</button>
+        <Modal open={open} onClose={onClose} title="Delete this chat?">Sure?</Modal>
+      </>
+    )
+    const { rerender } = render(view(false))
+    const opener = screen.getByRole('button', { name: 'Delete' })
+    opener.focus()
+    rerender(view(true))
+    const dialog = document.querySelector('dialog') as HTMLDialogElement
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    ;(screen.getByRole('button', { name: 'Close', hidden: true }) as HTMLElement).focus()
+    rerender(view(false))
+    expect(document.activeElement).toBe(opener)
   })
 })

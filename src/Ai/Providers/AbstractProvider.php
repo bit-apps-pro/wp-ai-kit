@@ -15,6 +15,12 @@ abstract class AbstractProvider implements EngineInterface
     /** One model call, not the whole loop. */
     public const TIMEOUT = 90;
 
+    /**
+     * One streamed model call. The limit covers the whole transfer, and a long
+     * answer that is already showing should not fail at the plain call's limit.
+     */
+    public const STREAM_TIMEOUT = 300;
+
     public function __construct(protected string $apiKey) {}
 
     /**
@@ -57,7 +63,7 @@ abstract class AbstractProvider implements EngineInterface
         add_action('requests-request.progress', $listener, 10, 1);
 
         try {
-            [$status, $body] = $this->request($url, $headers + ['accept' => 'text/event-stream'], $payload);
+            [$status, $body] = $this->request($url, $headers + ['accept' => 'text/event-stream'], $payload, self::STREAM_TIMEOUT);
         } finally {
             remove_action('requests-request.progress', $listener, 10);
         }
@@ -109,14 +115,16 @@ abstract class AbstractProvider implements EngineInterface
      *
      * @return array{0: int, 1: string}
      */
-    private function request(string $url, array $headers, array $payload): array
+    private function request(string $url, array $headers, array $payload, int $timeout = self::TIMEOUT): array
     {
         if ('' === $this->apiKey) {
             throw new AiException('No API key is saved for the AI assistant.', 'missing_api_key');
         }
 
         $response = wp_safe_remote_post($url, [
-            'timeout' => self::TIMEOUT,
+            'timeout' => $timeout,
+            // A redirect would take the API key's header to another host.
+            'redirection' => 0,
             'headers'     => $headers + ['content-type' => 'application/json'],
             'body'        => wp_json_encode($payload),
         ]);

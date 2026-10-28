@@ -31,6 +31,9 @@ final class AgentLoop
     /** @var null|callable(array<string, mixed>): void */
     private $listener;
 
+    /** @var array<int, array<string, mixed>> */
+    private array $completed = [];
+
     public function __construct(private EngineInterface $engine, private ToolRunner $runner, private int $maxTurns = 6, private int $maxTokens = 4096, private string $model = '') {}
 
     /**
@@ -46,6 +49,19 @@ final class AgentLoop
         $this->listener = $listener;
 
         return $this;
+    }
+
+    /**
+     * The steps of the last run() or resume() that finished before a model call
+     * failed: model turns with the results of the tools they ran, the approved
+     * action's result first after resume(). Tools act on the site, so these are
+     * kept even though the reply did not finish; empty when nothing ran.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function completed(): array
+    {
+        return $this->completed;
     }
 
     /**
@@ -98,6 +114,7 @@ final class AgentLoop
      */
     private function loop(array $messages, array $appended, string $system, ToolContext $call): array
     {
+        $this->completed = [];
         $tools = array_map(static fn ($tool) => [
             'name'        => $tool->name(),
             'description' => $tool->description(),
@@ -116,9 +133,17 @@ final class AgentLoop
             $this->emit(['type' => 'step', 'turn' => $turn]);
             $options = ['max_tokens' => $this->maxTokens, 'model' => $this->model];
             $streams = null !== $this->listener && $this->engine instanceof SupportsStreaming && $this->engine->canStream();
-            $response = $streams
-                ? $this->engine->stream($messages, $tools, $system, $options, fn (string $delta) => $this->emit(['type' => 'text', 'delta' => $delta]))
-                : $this->engine->send($messages, $tools, $system, $options);
+            $sent = self::paired($messages);
+
+            try {
+                $response = $streams
+                    ? $this->engine->stream($sent, $tools, $system, $options, fn (string $delta) => $this->emit(['type' => 'text', 'delta' => $delta]))
+                    : $this->engine->send($sent, $tools, $system, $options);
+            } catch (\Throwable $error) {
+                $this->completed = $appended;
+
+                throw $error;
+            }
             if (!$streams && '' !== (string) $response['text']) {
                 $this->emit(['type' => 'text', 'delta' => (string) $response['text']]);
             }
@@ -198,6 +223,33 @@ final class AgentLoop
         if (null !== $this->listener) {
             ($this->listener)($event);
         }
+    }
+
+    /**
+     * Every model turn that asked for tools followed by their results, as the
+     * providers require: a turn whose results were never stored (a reply cut off
+     * before this kit kept completed steps) gets "not run" ones, so the chat
+     * carries on instead of failing on every message.
+     *
+     * @param array<int, array<string, mixed>> $messages
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function paired(array $messages): array
+    {
+        $messages = array_values($messages);
+        $out = [];
+        $count = \count($messages);
+        foreach ($messages as $i => $message) {
+            $out[] = $message;
+            $calls = 'assistant' === ($message['role'] ?? '') && \is_array($message['tool_calls'] ?? null) ? $message['tool_calls'] : [];
+            if ([] === $calls || ($i + 1 < $count && 'tool' === ($messages[$i + 1]['role'] ?? ''))) {
+                continue;
+            }
+            $out[] = ['role' => 'tool', 'results' => array_map(static fn ($toolCall) => self::resultEntry((string) ($toolCall['id'] ?? ''), (string) ($toolCall['name'] ?? ''), 'Not run: the reply was interrupted before this call ran.', true, true), array_values($calls))];
+        }
+
+        return $out;
     }
 
     /**

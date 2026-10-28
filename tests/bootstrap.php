@@ -646,6 +646,12 @@ function site_url($path = '', $scheme = null)
     return home_url($path, $scheme);
 }
 
+/** Users are user{ID}@example.test. */
+function get_user_by($field, $value)
+{
+    return 'email' === $field && preg_match('/^user(\d+)@example\.test$/', (string) $value, $match) ? get_userdata((int) $match[1]) : false;
+}
+
 function get_userdata($userId)
 {
     return $userId > 0 && $userId < 900 ? (object) ['ID' => (int) $userId, 'display_name' => 'User ' . $userId] : false;

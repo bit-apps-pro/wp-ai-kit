@@ -4,6 +4,7 @@ namespace BitApps\AiKit;
 
 use BitApps\AiKit\Abilities\AbilitiesBridge;
 use BitApps\AiKit\Ai\Assistant;
+use BitApps\AiKit\Ai\AssistantPrivacy;
 use BitApps\AiKit\Ai\Attachments\AttachmentStore;
 use BitApps\AiKit\Ai\ConversationRepositoryInterface;
 use BitApps\AiKit\Ai\ConversationStore;
@@ -576,6 +577,61 @@ final class Kit
         }
     }
 
+    /**
+     * delete_user: the account's assistant chats and attached files.
+     *
+     * @param mixed $userId
+     */
+    public function onUserDeleting($userId = 0): void
+    {
+        $this->privacy()->forget((int) $userId);
+    }
+
+    /**
+     * wp_privacy_personal_data_exporters: the assistant's chats in Tools → Export Personal Data.
+     *
+     * @param mixed $exporters
+     *
+     * @return mixed
+     */
+    public function onPrivacyExporters($exporters)
+    {
+        if (!\is_array($exporters)) {
+            return $exporters;
+        }
+        $exporters[$this->context->slug() . '-ai-chats'] = [
+            'exporter_friendly_name' => sprintf('%s AI assistant chats', $this->context->name()),
+            'callback'               => fn ($email, $page = 1) => $this->privacy()->export((string) $email, (int) $page),
+        ];
+
+        return $exporters;
+    }
+
+    /**
+     * wp_privacy_personal_data_erasers: the assistant's chats and files in Tools → Erase Personal Data.
+     *
+     * @param mixed $erasers
+     *
+     * @return mixed
+     */
+    public function onPrivacyErasers($erasers)
+    {
+        if (!\is_array($erasers)) {
+            return $erasers;
+        }
+        $erasers[$this->context->slug() . '-ai-chats'] = [
+            'eraser_friendly_name' => sprintf('%s AI assistant chats', $this->context->name()),
+            'callback'             => fn ($email) => $this->privacy()->erase((string) $email),
+        ];
+
+        return $erasers;
+    }
+
+    public function privacy(): AssistantPrivacy
+    {
+        return new AssistantPrivacy($this->context, $this->conversations(), $this->attachments());
+    }
+
     /** The plugin's MCP settings store (shared shape across Bit plugins). */
     public function mcpSettings(): McpSettings
     {
@@ -1019,6 +1075,12 @@ final class Kit
         }
         if ($this->context->provides(PluginContext::FEATURE_REST_UI) || $this->context->provides(PluginContext::FEATURE_MCP)) {
             add_action('rest_api_init', [$this, 'onRestApiInit'], 20, 0);
+        }
+        if ($this->context->provides(PluginContext::FEATURE_ASSISTANT)) {
+            // Before WordPress removes the account: its chats and files go with it.
+            add_action('delete_user', [$this, 'onUserDeleting'], 10, 1);
+            add_filter('wp_privacy_personal_data_exporters', [$this, 'onPrivacyExporters'], 10, 1);
+            add_filter('wp_privacy_personal_data_erasers', [$this, 'onPrivacyErasers'], 10, 1);
         }
         if (!$this->context->provides(PluginContext::FEATURE_MCP)) {
             return;

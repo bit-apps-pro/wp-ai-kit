@@ -314,6 +314,22 @@ final class RestRoutesTest extends TestCase
         self::assertSame(0, $this->call('GET', '/assistant/history', [], ['archived' => '1'])->get_data()['total']);
     }
 
+    public function testOnlyManagersSeeTheKeyHintsAndTheGateway(): void
+    {
+        $kit = $this->boot();
+        $kit->saveAiSettings(['provider' => 'openai_compatible', 'base_url' => 'https://gateway.example.com/v1', 'model' => 'm', 'api_key' => 'sk-test-abcd1234']);
+
+        \AiKitTestState::$currentUser = self::MANAGER;
+        $managed = $this->call('GET', '/settings/assistant')->get_data();
+        self::assertSame('…1234', $managed['keys']['openai_compatible']['hint']);
+        self::assertSame('https://gateway.example.com/v1', $managed['settings']['base_url']);
+
+        \AiKitTestState::$currentUser = self::MEMBER;
+        $used = $this->call('GET', '/settings/assistant')->get_data();
+        self::assertSame(['set' => true, 'hint' => ''], $used['keys']['openai_compatible']);
+        self::assertSame('', $used['settings']['base_url']);
+    }
+
     public function testSettingsScreensReadAndSave(): void
     {
         $this->boot();

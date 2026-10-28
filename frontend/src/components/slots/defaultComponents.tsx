@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { useSlotsWith } from '../../core/context'
+import { useI18nOptional, useSlotsWith } from '../../core/context'
 import type {
   BadgeProps, ButtonProps, CheckboxProps, CopyFieldProps, MenuProps, ModalProps, SelectProps, SlotComponents,
   SpinnerProps, SwitchProps, TabsProps, TextInputProps, TooltipProps,
@@ -79,25 +79,35 @@ function Checkbox({ checked, onChange, disabled, label, id }: CheckboxProps) {
 }
 
 function Spinner({ size = 'sm', className }: SpinnerProps) {
-  return <span className={['aikit-spinner', size === 'md' ? 'aikit-spinner--md' : '', className || ''].join(' ').trim()} role="status" aria-label="Loading" />
+  const { __ } = useI18nOptional()
+  return <span className={['aikit-spinner', size === 'md' ? 'aikit-spinner--md' : '', className || ''].join(' ').trim()} role="status" aria-label={__('Loading')} />
 }
 
-/** A `<dialog>`: native focus trap and Escape handling, no portal needed. */
+/**
+ * A `<dialog>`: native focus trap, no portal needed. Escape asks the host to
+ * close it (once); closed, focus goes back to what opened it, since the dialog
+ * leaves the page before the browser could do that itself.
+ */
 function Modal({ open, onClose, title, footer, width = 480, children }: ModalProps) {
+  const { __ } = useI18nOptional()
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const dialog = ref.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal?.()
-    if (!open && dialog.open) dialog.close()
+    if (!open || !dialog) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (!dialog.open) dialog.showModal?.()
+    return () => {
+      if (dialog.open) dialog.close()
+      if (opener?.isConnected) opener.focus()
+    }
   }, [open])
   if (!open) return null
   return (
-    <dialog ref={ref} className="aikit aikit-modal" style={{ width }} onClose={onClose} onCancel={onClose}>
+    <dialog ref={ref} className="aikit aikit-modal" style={{ width }} onCancel={(e) => { e.preventDefault(); onClose() }}>
       {title !== undefined && (
         <div className="aikit-modal__head">
           <span>{title}</span>
-          <Button variant="ghost" size="sm" icon={<Icon name="close" />} aria-label="Close" onClick={onClose} />
+          <Button variant="ghost" size="sm" icon={<Icon name="close" />} aria-label={__('Close')} onClick={onClose} />
         </div>
       )}
       <div className="aikit-modal__body">{children}</div>
@@ -127,6 +137,7 @@ function Badge({ tone = 'neutral', title, children }: BadgeProps) {
 }
 
 function CopyField({ value, label, masked, className }: CopyFieldProps) {
+  const { __ } = useI18nOptional()
   const [copied, setCopied] = useState(false)
   const copy = () => {
     navigator.clipboard?.writeText(value).then(() => {
@@ -137,7 +148,7 @@ function CopyField({ value, label, masked, className }: CopyFieldProps) {
   return (
     <span className={['aikit-copy', className || ''].join(' ').trim()}>
       <span className="aikit-copy__value" title={masked ? undefined : value} aria-label={label}>{masked ? '•'.repeat(Math.min(24, value.length)) : value}</span>
-      <Button variant="ghost" size="sm" icon={<Icon name={copied ? 'check' : 'copy'} />} aria-label={copied ? 'Copied' : 'Copy'} title={copied ? 'Copied' : 'Copy'} onClick={copy} />
+      <Button variant="ghost" size="sm" icon={<Icon name={copied ? 'check' : 'copy'} />} aria-label={copied ? __('Copied') : __('Copy')} title={copied ? __('Copied') : __('Copy')} onClick={copy} />
     </span>
   )
 }
