@@ -78,6 +78,46 @@ final class AssistantTest extends TestCase
         self::assertCount(4, $stored['messages'], 'user, assistant, tool results, assistant');
     }
 
+    public function testCallsOverTheStepCapAreMarkedAsNotRun(): void
+    {
+        $calls = [];
+        for ($i = 0; $i < \BitApps\AiKit\Ai\AgentLoop::MAX_CALLS_PER_TURN + 2; ++$i) {
+            $calls[] = ['id' => 't' . $i, 'name' => 'list-forms', 'input' => []];
+        }
+        $this->engine->script = [
+            ['text' => '', 'tool_calls' => $calls],
+            ['text' => 'Done.', 'tool_calls' => []],
+        ];
+
+        $view = $this->assistant()->chat(self::ADMIN, 'Count everything');
+
+        $tools = $view['messages'][1]['tools'];
+        self::assertCount(\BitApps\AiKit\Ai\AgentLoop::MAX_CALLS_PER_TURN + 2, $tools);
+        self::assertFalse($tools[0]['error']);
+        self::assertArrayNotHasKey('skipped', $tools[0]);
+        $last = end($tools);
+        self::assertTrue($last['skipped'], 'refused for the cap, not failed');
+        self::assertFalse($last['error']);
+        self::assertStringContainsString('Not run: at most', wp_json_encode($this->engine->calls[1]['messages']), 'the model is still told');
+    }
+
+    public function testProgressReportsTextAndEachTool(): void
+    {
+        $this->engine->script = [
+            ['text' => 'Let me look.', 'tool_calls' => [['id' => 't1', 'name' => 'list-forms', 'input' => []]]],
+            ['text' => 'One form.', 'tool_calls' => []],
+        ];
+        $events = [];
+
+        $this->assistant()->onProgress(static function (array $event) use (&$events): void {
+            $events[] = $event;
+        })->chat(self::ADMIN, 'Which forms?');
+
+        $summary = array_map(static fn ($e) => $e['type'] . ':' . ($e['delta'] ?? $e['status'] ?? $e['turn'] ?? ''), $events);
+        self::assertSame(['step:0', 'text:Let me look.', 'tool:running', 'tool:ok', 'step:1', 'text:One form.'], $summary, 'an engine that does not stream gives each step\'s text at once');
+        self::assertSame('List forms', $events[2]['title']);
+    }
+
     public function testPersonalDataIsMaskedUnlessAllowed(): void
     {
         $this->engine->script = [

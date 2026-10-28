@@ -151,13 +151,13 @@ final class AgentLoop
 
                 $tool = ['type' => 'tool', 'id' => $id, 'name' => $name, 'title' => $titles[$name] ?? $name];
                 if (null !== $pending) {
-                    $results[] = self::resultEntry($id, $name, 'Not run: another action in this turn is waiting for the user. Ask again after they decide.', true);
+                    $results[] = self::resultEntry($id, $name, 'Not run: another action in this turn is waiting for the user. Ask again after they decide.', true, true);
                     $this->emit($tool + ['status' => 'skipped']);
 
                     continue;
                 }
                 if ($index >= self::MAX_CALLS_PER_TURN) {
-                    $results[] = self::resultEntry($id, $name, 'Not run: at most ' . self::MAX_CALLS_PER_TURN . ' tool calls per step. Ask for the rest in the next step.', true);
+                    $results[] = self::resultEntry($id, $name, 'Not run: at most ' . self::MAX_CALLS_PER_TURN . ' tool calls per step. Ask for the rest in the next step.', true, true);
                     $this->emit($tool + ['status' => 'skipped']);
 
                     continue;
@@ -200,13 +200,17 @@ final class AgentLoop
         }
     }
 
-    /** @return array{id: string, name: string, content: string, is_error: bool} */
-    private static function resultEntry(string $id, string $name, string $content, bool $isError): array
+    /**
+     * @param bool $skipped not run at all (the step's call cap, or an action waiting): the screens tell it from a failure
+     *
+     * @return array{id: string, name: string, content: string, is_error: bool, skipped?: true}
+     */
+    private static function resultEntry(string $id, string $name, string $content, bool $isError, bool $skipped = false): array
     {
         if (mb_strlen($content) > self::MAX_RESULT_CHARS) {
             $content = mb_substr($content, 0, self::MAX_RESULT_CHARS) . "\n[Result cut at " . self::MAX_RESULT_CHARS . ' characters; ask for less, e.g. a smaller page.]';
         }
 
-        return ['id' => $id, 'name' => $name, 'content' => $content, 'is_error' => $isError];
+        return ['id' => $id, 'name' => $name, 'content' => $content, 'is_error' => $isError] + ($skipped ? ['skipped' => true] : []);
     }
 }

@@ -263,7 +263,9 @@ final class Assistant
         foreach ($conversation['messages'] as $entry) {
             if ('tool' === ($entry['role'] ?? '')) {
                 foreach ((array) ($entry['results'] ?? []) as $result) {
-                    $results[(string) $result['id']] = !empty($result['is_error']);
+                    // Chats saved before `skipped` existed carry only the "Not run:" text.
+                    $skipped = !empty($result['skipped']) || str_starts_with((string) ($result['content'] ?? ''), 'Not run:');
+                    $results[(string) $result['id']] = $skipped ? 'skipped' : (!empty($result['is_error']) ? 'error' : 'ok');
                 }
             }
         }
@@ -284,8 +286,8 @@ final class Assistant
                     $tools[] = [
                         'name'  => (string) $toolCall['name'],
                         'title' => $definition?->title() ?? (string) $toolCall['name'],
-                        'error' => $results[(string) $toolCall['id']] ?? false,
-                    ];
+                        'error' => 'error' === ($results[(string) $toolCall['id']] ?? ''),
+                    ] + ('skipped' === ($results[(string) $toolCall['id']] ?? '') ? ['skipped' => true] : []);
                 }
                 if ('' !== trim((string) $entry['text']) || [] !== $tools) {
                     $items[] = ['role' => 'assistant', 'text' => (string) $entry['text'], 'tools' => $tools];
