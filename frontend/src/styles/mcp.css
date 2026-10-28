@@ -135,7 +135,8 @@
 .aikit-connect__deep-link:hover:where(.aikit, .aikit *) { background: var(--aikit-accent-hover); color: var(--aikit-accent-fg); }
 .aikit-connect__manual:where(.aikit, .aikit *) { display: block; margin-top: 4px; font-size: 13px; color: var(--aikit-fg); }
 .aikit-connect__steps:where(.aikit, .aikit *) { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: var(--aikit-fg); }
-.aikit-connect__url:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 4px; }
+/* As wide as a server URL needs, not the whole card. */
+.aikit-connect__url:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 440px; }
 .aikit-connect__snippet:where(.aikit, .aikit *) {
   margin: 0;
   padding: 12px;

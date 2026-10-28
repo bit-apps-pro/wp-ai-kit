@@ -72,6 +72,8 @@ export interface ConversationsSlice {
   search: string
   archived: boolean
   error: string | null
+  /** A next page is loading (`status` is `loading` too); a refresh keeps showing `items`. */
+  loadingMore?: boolean
 }
 
 export interface AiKitState {
@@ -379,14 +381,14 @@ export class AiKitStore {
     const archived = options.archived ?? current.archived
     const offset = options.more ? current.items.length : 0
     const ticket = ++this.historyTicket
-    this.patch({ conversations: { ...current, status: 'loading', search, archived, error: null } })
+    this.patch({ conversations: { ...current, status: 'loading', search, archived, error: null, loadingMore: offset > 0 } })
     try {
       const list = await this.transport.request<ConversationList>('assistant/history', { search, archived, offset, limit: options.limit ?? 20 })
       if (ticket !== this.historyTicket) return
-      this.patch({ conversations: { ...this.state.conversations, status: 'ready', items: offset > 0 ? [...this.state.conversations.items, ...list.items] : list.items, total: list.total } })
+      this.patch({ conversations: { ...this.state.conversations, status: 'ready', items: offset > 0 ? [...this.state.conversations.items, ...list.items] : list.items, total: list.total, loadingMore: false } })
     } catch (error) {
       if (ticket !== this.historyTicket) return
-      this.patch({ conversations: { ...this.state.conversations, status: 'error', error: errorMessage(error, 'Could not load the chat history.') } })
+      this.patch({ conversations: { ...this.state.conversations, status: 'error', error: errorMessage(error, 'Could not load the chat history.'), loadingMore: false } })
     }
   }
 

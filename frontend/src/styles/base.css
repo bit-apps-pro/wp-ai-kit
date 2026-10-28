@@ -242,10 +242,12 @@ h3 > .aikit-help-tip:where(.aikit, .aikit *) { margin-left: 4px; }
 .aikit-help-tip__bubble--open:where(.aikit, .aikit *) { visibility: visible; opacity: 1; }
 
 .aikit-menu:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
+/* Fixed and placed by the Menu next to its trigger, so a scrolling parent cannot clip it; hidden until placed. */
 .aikit-menu__list:where(.aikit, .aikit *) {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  visibility: hidden;
   min-width: 160px;
   margin: 0;
   padding: 4px;
@@ -254,7 +256,7 @@ h3 > .aikit-help-tip:where(.aikit, .aikit *) { margin-left: 4px; }
   border-radius: var(--aikit-radius-sm);
   background: var(--aikit-bg);
   box-shadow: var(--aikit-shadow-pop);
-  z-index: 5;
+  z-index: 100;
 }
 .aikit-menu__item:where(.aikit, .aikit *) {
   display: flex;

@@ -22,6 +22,9 @@ export interface ButtonProps {
   className?: string
   'aria-label'?: string
   'aria-pressed'?: boolean
+  'aria-expanded'?: boolean
+  'aria-haspopup'?: 'menu' | 'dialog' | 'listbox' | boolean
+  'aria-controls'?: string
   onClick?: () => void
   children?: ReactNode
 }

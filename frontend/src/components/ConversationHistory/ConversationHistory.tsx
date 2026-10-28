@@ -49,22 +49,32 @@ export function ago(seconds: number, locale: string | undefined, justNow: string
 /**
  * The archived list, fetched on its own so it can sit under the live list. It
  * follows every change to the live list (an archive, an unarchive, a delete).
+ * Closed, only the count is fetched, so the section shows only when there is
+ * something in it.
  */
-function useArchived(enabled: boolean, search: string, liveItems: ConversationSummary[], fallback: string) {
-  const { transport } = useAiKit()
-  const [state, setState] = useState<{ items: ConversationSummary[], total: number, loading: boolean, error: string | null }>({ items: [], total: 0, loading: false, error: null })
+type ArchivedState = { items: ConversationSummary[], total: number, known: boolean, loading: boolean, error: string | null }
+
+/** The last archived list per store, so a popover that opens again shows it at once and refreshes behind it. */
+const archivedCache = new WeakMap<object, ArchivedState>()
+
+function useArchived(enabled: boolean, expanded: boolean, search: string, liveItems: ConversationSummary[], fallback: string) {
+  const { transport, store } = useAiKit()
+  const [state, setState] = useState<ArchivedState>(() => archivedCache.get(store) ?? { items: [], total: 0, known: false, loading: false, error: null })
   const ticket = useRef(0)
+
+  useEffect(() => { archivedCache.set(store, state) }, [store, state])
 
   useEffect(() => {
     if (!enabled) return
     const mine = ++ticket.current
     setState(prev => ({ ...prev, loading: true, error: null }))
-    transport.request<ConversationList>('assistant/history', { search, archived: true, offset: 0, limit: ARCHIVED_PAGE }).then((list) => {
-      if (mine === ticket.current) setState({ items: list.items, total: list.total, loading: false, error: null })
+    transport.request<ConversationList>('assistant/history', { search, archived: true, offset: 0, limit: expanded ? ARCHIVED_PAGE : 1 }).then((list) => {
+      // Closed, only the count is fetched; the rows already shown stay for the next opening.
+      if (mine === ticket.current) setState(prev => ({ items: expanded ? list.items : (list.total === 0 ? [] : prev.items), total: list.total, known: true, loading: false, error: null }))
     }).catch((error: unknown) => {
-      if (mine === ticket.current) setState(prev => ({ ...prev, loading: false, error: error instanceof Error && error.message ? error.message : fallback }))
+      if (mine === ticket.current) setState(prev => ({ ...prev, known: true, loading: false, error: error instanceof Error && error.message ? error.message : fallback }))
     })
-  }, [enabled, search, liveItems, transport, fallback])
+  }, [enabled, expanded, search, liveItems, transport, fallback])
 
   return state
 }
@@ -85,8 +95,14 @@ export default function ConversationHistory({
   const [renaming, setRenaming] = useState<{ id: string, title: string } | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [archivedOpen, setArchivedOpen] = useState(false)
-  const archived = useArchived(showArchived && archivedOpen, history.search, history.items, __('Could not load the archived chats.'))
+  const archived = useArchived(showArchived && (anchor === 'inline' || open), archivedOpen, history.search, history.items, __('Could not load the archived chats.'))
+  // Nothing archived (or nothing matching the search): no section, and it starts closed when chats come back.
+  // A refresh keeps the last answer: the section neither flashes in nor out while it runs.
+  const archivedEmpty = archived.known && !archived.error && archived.total === 0
+  useEffect(() => { if (archivedEmpty) setArchivedOpen(false) }, [archivedEmpty])
   const root = useRef<HTMLDivElement>(null)
+  const body = useRef<HTMLDivElement>(null)
+  const archivedHead = useRef<HTMLDivElement>(null)
   const locale = localeOf(bootstrap.user?.locale)
   const popover = anchor === 'popover'
 
@@ -112,6 +128,16 @@ export default function ConversationHistory({
 
   // A popover that opens again shows what happened since (the chat that just ended, say).
   useEffect(() => { if (popover && open && history.status !== 'idle') void history.refresh() }, [popover, open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Opened, the Archived heading leaves the bottom edge for its place under the live chats:
+  // once its chats are there, scroll it to the top so they show.
+  const revealArchived = useRef(false)
+  useEffect(() => { revealArchived.current = archivedOpen }, [archivedOpen])
+  useEffect(() => {
+    if (!revealArchived.current || archived.items.length === 0 || !body.current || !archivedHead.current) return
+    revealArchived.current = false
+    body.current.scrollTop += archivedHead.current.getBoundingClientRect().top - body.current.getBoundingClientRect().top
+  }, [archivedOpen, archived.items])
 
   if (popover && !open) return null
 
@@ -219,39 +245,43 @@ export default function ConversationHistory({
         </Button>
       )}
 
-      {!history.loading && history.items.length === 0 && !history.error && (
-        <div className="aikit-empty aikit-history__empty">{history.search ? __('No chat matches that search.') : (emptyText || __('No earlier chats yet.'))}</div>
-      )}
+      {/*
+        One scroll for every chat: search and New chat above, Delete all below stay in view.
+        Closed, the Archived heading sticks to the bottom of the scroll; open, its chats follow the live ones.
+      */}
+      <div className="aikit-history__body" ref={body}>
+        {!history.loading && history.items.length === 0 && !history.error && (
+          <div className="aikit-empty aikit-history__empty">{history.search ? __('No chat matches that search.') : (emptyText || __('No earlier chats yet.'))}</div>
+        )}
 
-      <ul className="aikit-history__list">{history.items.map(row)}</ul>
+        <ul className="aikit-history__list">{history.items.map(row)}</ul>
 
-      {history.loading && <div className="aikit-history__loading"><Spinner /></div>}
-      {!history.loading && history.hasMore && (
-        <Button variant="secondary" size="sm" className="aikit-history__more-btn" onClick={() => { void history.loadMore() }}>{__('Load more')}</Button>
-      )}
+        {/* A refresh keeps the list on screen; only a first load or the next page shows the spinner. */}
+        {history.loading && (history.items.length === 0 || history.loadingMore) && <div className="aikit-history__loading"><Spinner /></div>}
+        {!history.loadingMore && history.hasMore && (
+          <Button variant="secondary" size="sm" className="aikit-history__more-btn" onClick={() => { void history.loadMore() }}>{__('Load more')}</Button>
+        )}
 
-      {showArchived && (
-        <div className="aikit-history__archived">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="aikit-history__archived-toggle"
-            icon={<Icon name={archivedOpen ? 'chevron-down' : 'chevron-right'} />}
-            aria-pressed={archivedOpen}
-            onClick={() => setArchivedOpen(o => !o)}
-          >
-            {archivedOpen && !archived.loading ? sprintf(__('Archived (%d)'), archived.total) : __('Archived')}
-          </Button>
-          {archivedOpen && (
-            <>
-              {archived.error && <div className="aikit-notice aikit-notice--danger aikit-history__note">{archived.error}</div>}
-              {archived.loading && <div className="aikit-history__loading"><Spinner /></div>}
-              {!archived.loading && !archived.error && archived.items.length === 0 && <div className="aikit-empty aikit-history__empty">{__('No archived chats.')}</div>}
-              <ul className="aikit-history__list">{archived.items.map(row)}</ul>
-            </>
-          )}
-        </div>
-      )}
+        {showArchived && archived.known && !archivedEmpty && (
+          <>
+            <div ref={archivedHead} className={['aikit-history__archived', archivedOpen ? 'aikit-history__archived--open' : ''].join(' ').trim()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="aikit-history__archived-toggle"
+                icon={<Icon name={archivedOpen ? 'chevron-down' : 'chevron-right'} />}
+                aria-pressed={archivedOpen}
+                onClick={() => setArchivedOpen(o => !o)}
+              >
+                {archived.error ? __('Archived') : sprintf(__('Archived (%d)'), archived.total)}
+              </Button>
+            </div>
+            {archivedOpen && archived.error && <div className="aikit-notice aikit-notice--danger aikit-history__note">{archived.error}</div>}
+            {archivedOpen && archived.loading && archived.items.length === 0 && <div className="aikit-history__loading"><Spinner /></div>}
+            {archivedOpen && <ul className="aikit-history__list aikit-history__archived-list">{archived.items.map(row)}</ul>}
+          </>
+        )}
+      </div>
 
       {history.items.length > 0 && !history.search && (
         <div className="aikit-history__footer">
