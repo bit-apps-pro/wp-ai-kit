@@ -89,19 +89,36 @@ visitor-written text with `Security\UntrustedContent::wrap()`.
 `->reset($userId)` and `->view($userId)` drive an in-admin chat; `Kit::assistantState()` and
 `Kit::saveAiSettings($input)` back its settings screen. The engine is the WordPress AI Client when the site
 set up a provider in WordPress Settings → Connectors (WordPress 7.0+), otherwise the plugin's saved key for Claude,
-OpenAI or Gemini. Tools run through the same `ToolRunner` as MCP, on channel `assistant`, with the access level
+OpenAI, Gemini or an OpenAI-compatible service (a base URL and model name the manager sets). Tools run through the same `ToolRunner` as MCP, on channel `assistant`, with the access level
 from `<prefix>ai_settings`; destructive tools return a `pending` action the user approves or cancels in the UI
 (never the model). Build the page-context sentence on the server from ids, not from browser text. Supply
 `services.assistant_persona` for plugin-specific guidance. Bit CRM can replace its `AgentLoop`,
-`ToolDispatcher` and providers with this; streaming (SSE) is not in the kit yet.
+`ToolDispatcher` and providers with this, streaming included.
+
+### Streamed replies
+
+Opt in with `PluginContext::FEATURE_STREAM => true`: the UI then sends through `assistant/stream` (and approvals
+through `assistant/decide/stream`) and shows the reply text while the model writes it, and each tool as it runs.
+Claude, OpenAI, OpenAI-compatible and Gemini engines stream; the WordPress AI Client answers each step at once
+through the same route. The stream sends
+`X-Accel-Buffering: no` for nginx; a proxy or CDN that still buffers it only delays the reply to the end, as without
+streaming. A host with its own transport implements `Transport.stream()` (or leaves it out and the UI sends normally).
+`AgentLoop::onProgress()` / `Assistant::onProgress()` give the same events to PHP callers.
 
 ### Storage
 
 Pass `'storage' => PluginContext::STORAGE_TABLES` for real chat history and a searchable activity log in the
 kit's own tables; call `Kit::for($slug)->installTables()` on activation, `deactivate()` on deactivation and
-`uninstallTables()` on uninstall (README, "Tables"). Only the tables for the parts the plugin ships are
+`Kit::removeSiteData()` on uninstall (README, "Uninstall"). Only the tables for the parts the plugin ships are
 created. Leave it at `options` (the default) for a small footprint: one conversation per user and the last
 200 log events. A plugin that already has tables passes them as the `conversations` / `audit` services.
+
+### Attachments
+
+Opt in with `PluginContext::FEATURE_ATTACHMENTS => true` (needs `rest_ui`); the chat panel then shows an
+attach button, drag-and-drop and paste. `Kit::removeSiteData()` on uninstall removes the files
+folder too. A host with its own transport implements `Transport.upload()`. Limits and safety rules:
+README, "Attachments".
 
 ### Leaving parts out
 
@@ -121,6 +138,10 @@ the kit registers no hooks or routes for them and the UI package hides them. Use
      `@bitapps/wp-ai-kit-ui/antd`, and spread `useAntdTheme()` on the root element's `style`.
    - **Own design system (Bit Form):** a partial slot map (Button, Switch, Badge, …); unmapped slots keep the
      plain defaults. Theme with `--aikit-*` tokens on the app root.
+     A slot component renders inside `.aikit`, which makes every element and pseudo-element
+     `box-sizing: border-box`: a host style sized as content-box (a fixed-height `::after` tooltip, say)
+     sets `box-sizing: content-box` back on itself. The kit sizes the rows it puts a slot in (the server
+     URL is at most 440px wide); a slot component should fill its row, not set its own width or auto margins.
 4. Mount the parts in the plugin's own containers: `AssistantChat` in a dock, drawer or floating `Panel`;
    `AssistantSettingsForm` and `McpSettings` on settings pages (route-driven tabs through `tab` /
    `onTabChange`).
@@ -194,8 +215,9 @@ providers, streaming and agent loop move into the kit's `Ai\*`; `SystemPrompt`,
 - [ ] Settings screens: `@bitapps/wp-ai-kit-ui` over `rest_ui`, or the plugin's own on `adminState()` /
       `saveMcpSettings()` and `assistantState()` / `saveAiSettings()`, behind the plugin's capability check.
 - [ ] `can_use` is a staff capability, never subscribers; `manage_cap` is the site administrators'.
-- [ ] `storage` chosen; with `tables`, `installTables()` / `deactivate()` / `uninstallTables()` wired to
-      activation, deactivation and uninstall.
-- [ ] Uninstall deletes the kit's options and user meta (README, "What the kit stores").
-- [ ] Privacy: the plugin's privacy exporters/erasers cover conversations and the audit log if it keeps them.
+- [ ] `storage` chosen; with `tables`, `installTables()` / `deactivate()` wired to activation and deactivation.
+- [ ] Uninstall calls `Kit::removeSiteData($context, $dropTables)` on every site (README, "Uninstall"); the
+      plugin no longer lists the kit's options, user meta or folders itself.
+- [ ] Privacy: the kit exports and erases the assistant's chats and files itself (`<slug>-ai-chats`) and
+      removes them when a user is deleted; the plugin covers the audit log if it keeps one.
 - [ ] Tested with an Application Password (`curl … tools/list`) and one OAuth app (Claude.ai or ChatGPT).
