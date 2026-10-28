@@ -9,7 +9,7 @@ import type { ComponentType, KeyboardEvent, ReactNode } from 'react'
 export type IconName =
   | 'send' | 'attach' | 'history' | 'plus' | 'close' | 'trash' | 'edit' | 'pin' | 'archive' | 'unarchive'
   | 'copy' | 'check' | 'warning' | 'info' | 'chevron-down' | 'chevron-right' | 'back' | 'spark' | 'stop'
-  | 'search' | 'filter' | 'external' | 'refresh' | 'key' | 'link' | 'more'
+  | 'search' | 'filter' | 'external' | 'refresh' | 'key' | 'link' | 'more' | 'new-chat'
 
 export interface ButtonProps {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'

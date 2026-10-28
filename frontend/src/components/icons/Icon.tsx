@@ -4,7 +4,9 @@ import type { IconName, IconProps } from '../../core/slots'
 /** Stroke icons on a 24-unit grid; `currentColor`, so they follow the text. */
 const PATHS: Record<IconName, ReactNode> = {
   send: <><path d="M12 19V5" /><path d="M5 12l7-7 7 7" /></>,
-  attach: <path d="M21.4 11.1l-8.5 8.5a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7L10.5 17.2a1.7 1.7 0 0 1-2.4-2.4l8.1-8.1" />,
+  // The paper clip stands upright.
+  attach: <path transform="rotate(-45 12 12)" d="M21.4 11.1l-8.5 8.5a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7L10.5 17.2a1.7 1.7 0 0 1-2.4-2.4l8.1-8.1" />,
+  'new-chat': <><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /><path d="M8 12h8" /><path d="M12 8v8" /></>,
   history: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
   close: <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>,

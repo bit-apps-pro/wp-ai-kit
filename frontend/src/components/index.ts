@@ -11,6 +11,8 @@ export type { ThinkingIndicatorProps } from './ThinkingIndicator'
 // Chat
 export { default as AssistantChat } from './AssistantChat/AssistantChat'
 export type { AssistantChatProps, CommandsProvider, CommandOption, MentionsProvider, MentionOption } from './AssistantChat/AssistantChat'
+export { default as ToolActivity } from './AssistantChat/ToolActivity'
+export type { ToolActivityMode } from './AssistantChat/ToolActivity'
 export { default as PromptComposer } from './PromptComposer/PromptComposer'
 export type { PromptComposerProps } from './PromptComposer/PromptComposer'
 export { default as PendingActionCard } from './PendingActionCard/PendingActionCard'

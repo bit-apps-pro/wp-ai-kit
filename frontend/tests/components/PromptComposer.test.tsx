@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import type { DraftAttachment } from '../../src/core/store'
 import PromptComposer, { type CommandsProvider, type MentionsProvider, type PromptComposerProps } from '../../src/components/PromptComposer/PromptComposer'
 import { AiKitProvider } from '../../src/core/context'
 import { createMockTransport, sampleBootstrap } from '../mockTransport'
@@ -111,5 +112,58 @@ describe('PromptComposer', () => {
     await user.type(input, 'see https://a/b')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(screen.getByText('/ commands · Shift+Enter new line')).toBeInTheDocument()
+  })
+})
+
+describe('PromptComposer: attachments', () => {
+  const draft = (patch: Partial<DraftAttachment>): DraftAttachment => ({ localId: 'l1', name: 'notes.txt', size: 2048, kind: 'text', status: 'ready', progress: 1, id: 'att1', ...patch })
+
+  it('has no attach button unless the host passes attachments', () => {
+    renderComposer()
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+  })
+
+  it('hands picked files to the host and shows each chip with its state', async () => {
+    const user = userEvent.setup()
+    const onAdd = vi.fn()
+    const onRemove = vi.fn()
+    const items = [draft({}), draft({ localId: 'l2', name: 'scan.pdf', kind: 'pdf', status: 'error', error: 'The file is too large.', id: undefined })]
+    const { container } = render(
+      <AiKitProvider bootstrap={sampleBootstrap()} transport={createMockTransport().transport}>
+        <PromptComposer onSubmit={vi.fn()} attachments={{ items, accept: '.txt,.pdf', onAdd, onRemove, note: 'Deleted after 24 hours.' }} />
+      </AiKitProvider>,
+    )
+
+    expect(screen.getByText('2 KB')).toBeTruthy()
+    expect(screen.getByText('The file is too large.')).toBeTruthy()
+    expect(screen.getByText('Deleted after 24 hours.')).toBeTruthy()
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input.accept).toBe('.txt,.pdf')
+    await user.upload(input, new File(['a'], 'more.txt'))
+    expect(onAdd).toHaveBeenCalledWith([expect.objectContaining({ name: 'more.txt' })])
+
+    await user.click(screen.getByRole('button', { name: 'Remove scan.pdf' }))
+    expect(onRemove).toHaveBeenCalledWith('l2')
+  })
+
+  it('sends with only files, but not while one uploads', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    const attachments = { accept: '.txt', onAdd: vi.fn(), onRemove: vi.fn() }
+    const { rerender } = render(
+      <AiKitProvider bootstrap={sampleBootstrap()} transport={createMockTransport().transport}>
+        <PromptComposer onSubmit={onSubmit} attachments={{ ...attachments, items: [draft({ status: 'uploading', progress: 0.4, id: undefined })] }} />
+      </AiKitProvider>,
+    )
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+
+    rerender(
+      <AiKitProvider bootstrap={sampleBootstrap()} transport={createMockTransport().transport}>
+        <PromptComposer onSubmit={onSubmit} attachments={{ ...attachments, items: [draft({})] }} />
+      </AiKitProvider>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSubmit).toHaveBeenCalledWith('', { mentions: [] })
   })
 })

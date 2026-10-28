@@ -1,8 +1,8 @@
 import { AiKitError, type Transport } from './transport'
 import type {
-  ActivityPage, ActivityQuery, AiKitBootstrap, AiKitEvent, AiSettingsInput, ApiKeyRecord, AssistantState,
+  ActivityPage, ActivityQuery, AiKitBootstrap, AiKitEvent, AiSettingsInput, ApiKeyRecord, AssistantState, AttachmentKind,
   ChatMessage, ChatView, ConversationList, ConversationRef, ConversationSummary, EngineInfo, McpState,
-  Mention, PendingAction, ReplySource,
+  Mention, PendingAction, ReplySource, StreamEvent, ToolUse,
 } from './types'
 
 export type ResourceStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -11,6 +11,31 @@ export interface Resource<T> {
   status: ResourceStatus
   data: T | null
   error: string | null
+}
+
+/** A file picked for the next message: uploading, ready to send, or refused. */
+export interface DraftAttachment {
+  localId: string
+  name: string
+  size: number
+  kind: AttachmentKind | null
+  status: 'uploading' | 'ready' | 'error'
+  /** 0–1 while uploading. */
+  progress: number
+  /** The server's id once uploaded. */
+  id?: string
+  error?: string
+  /** An object URL for an image's thumbnail; revoked when the draft goes. */
+  previewUrl?: string
+}
+
+/** Extension → kind, as the PHP AttachmentStore maps them. */
+const KIND_BY_EXTENSION: Record<string, AttachmentKind> = {
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', pdf: 'pdf', docx: 'docx', txt: 'text', md: 'text', csv: 'text',
+}
+
+export function attachmentKindOf(name: string): AttachmentKind | null {
+  return KIND_BY_EXTENSION[(name.split('.').pop() || '').toLowerCase()] || null
 }
 
 export interface AssistantSlice {
@@ -28,6 +53,16 @@ export interface AssistantSlice {
   extra: Record<string, unknown>
   /** The message the user typed but has not sent, or that a failed turn gave back. */
   draft: string
+  /** Files picked for the next message. */
+  attachments: DraftAttachment[]
+  /** A streamed turn while it runs: the reply text so far and its tools; null otherwise. */
+  live: LiveTurn | null
+}
+
+/** What a streamed turn has shown so far. */
+export interface LiveTurn {
+  text: string
+  tools: ToolUse[]
 }
 
 export interface ConversationsSlice {
@@ -79,6 +114,8 @@ function initialState(bootstrap: AiKitBootstrap): AiKitState {
       reason: null,
       extra: {},
       draft: '',
+      attachments: [],
+      live: null,
     },
     conversations: { status: 'idle', items: [], total: 0, search: '', archived: false, error: null },
     assistantSettings: { status: 'idle', data: null, error: null },
@@ -135,6 +172,52 @@ export class AiKitStore {
     this.eventListeners.forEach(listener => listener(event))
   }
 
+  /**
+   * Check files against the bootstrap's rules and upload the good ones; each
+   * becomes a draft the composer shows with its progress or why it was refused.
+   */
+  attach(files: File[]): void {
+    const rules = this.bootstrap.attachments
+    const upload = this.transport.upload?.bind(this.transport)
+    let drafts = [...this.state.assistant.attachments]
+    files.forEach((file) => {
+      const localId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      const kind = attachmentKindOf(file.name)
+      const live = drafts.filter(draft => draft.status !== 'error')
+      let error = ''
+      if (!rules || !upload) error = 'Files cannot be attached here.'
+      else if (!kind || !rules.kinds.includes(kind)) error = 'This file type cannot be attached here.'
+      else if (live.length >= rules.maxFiles) error = `Attach at most ${rules.maxFiles} files to one message.`
+      else if (rules.maxBytes[kind] && file.size > (rules.maxBytes[kind] as number)) error = 'The file is too large.'
+      else if (live.reduce((sum, draft) => sum + draft.size, 0) + file.size > rules.maxTotalBytes) error = 'The files are too large together for one message.'
+
+      const previewUrl = !error && kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined
+      const draft: DraftAttachment = { localId, name: file.name, size: file.size, kind, status: error ? 'error' : 'uploading', progress: 0, error: error || undefined, previewUrl }
+      drafts = [...drafts, draft]
+      if (error || !upload) return
+
+      upload(file, { onProgress: fraction => this.patchAttachment(localId, { progress: fraction }) })
+        .then(attachment => this.patchAttachment(localId, { status: 'ready', progress: 1, id: attachment.id }))
+        .catch(cause => this.patchAttachment(localId, { status: 'error', error: errorMessage(cause, 'The upload failed.') }))
+    })
+    this.patchAssistant({ attachments: drafts })
+  }
+
+  /** Drop a picked file; one already uploaded is deleted on the site too. */
+  detach(localId: string): void {
+    const draft = this.state.assistant.attachments.find(item => item.localId === localId)
+    if (!draft) return
+    if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl)
+    if (draft.id) void this.transport.request('assistant/attachments/delete', { id: draft.id }).catch(() => undefined)
+    this.patchAssistant({ attachments: this.state.assistant.attachments.filter(item => item.localId !== localId) })
+  }
+
+  private patchAttachment(localId: string, patch: Partial<DraftAttachment>): void {
+    const { attachments } = this.state.assistant
+    if (!attachments.some(item => item.localId === localId)) return
+    this.patchAssistant({ attachments: attachments.map(item => (item.localId === localId ? { ...item, ...patch } : item)) })
+  }
+
   setDraft(draft: string): void {
     if (draft !== this.state.assistant.draft) this.patchAssistant({ draft })
   }
@@ -159,29 +242,81 @@ export class AiKitStore {
   async send(text: string, options: SendOptions = {}): Promise<ChatView | null> {
     const message = text.trim()
     const { assistant } = this.state
-    if (!message || assistant.busy || assistant.pending) return null
+    // Files still uploading hold the message back; refused ones are left out.
+    if (assistant.attachments.some(item => item.status === 'uploading')) return null
+    const ready = assistant.attachments.filter(item => item.status === 'ready' && item.id)
+    if ((!message && ready.length === 0) || assistant.busy || assistant.pending) return null
 
     this.patchAssistant({
       busy: true,
       error: '',
       reason: null,
       draft: '',
-      messages: [...assistant.messages, { role: 'user', text: message, optimistic: true }],
+      messages: [...assistant.messages, {
+        role: 'user',
+        text: message,
+        optimistic: true,
+        ...(ready.length ? { attachments: ready.map(item => ({ id: item.id as string, name: item.name, kind: item.kind || 'text', size: item.size })) } : {}),
+      }],
     })
     const before = assistant.messages
     try {
-      const view = await this.transport.request<ChatView>('assistant/chat', {
+      const payload = {
         message,
         context: { ...(options.context || {}), ...(options.mentions ? { mentions: options.mentions } : {}) },
-      })
+        ...(ready.length ? { attachments: ready.map(item => item.id) } : {}),
+      }
+      const view = this.streams()
+        ? await this.streamTurn(payload)
+        : await this.transport.request<ChatView>('assistant/chat', payload)
       this.applyView(view, 'chat')
-      this.patchAssistant({ busy: false })
+      // Sent: the files belong to the message now.
+      this.state.assistant.attachments.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl) })
+      this.patchAssistant({ busy: false, attachments: [] })
       // A new turn: every tool in it is new, even one the previous turn also ran.
       this.emitToolEvents([], view)
       return view
     } catch (error) {
       this.recover(error, 'chat', before, message)
       return null
+    }
+  }
+
+  /** Whether turns are followed as they run (the site offers it and the transport can). */
+  private streams(): boolean {
+    return this.bootstrap.features.stream === true && !!this.transport.stream
+  }
+
+  /** Send through the stream, showing the reply as it comes; the live turn ends with the request. */
+  private async streamTurn(payload: Record<string, unknown>, action: 'chat' | 'decide' = 'chat'): Promise<ChatView> {
+    this.patchAssistant({ live: { text: '', tools: [] } })
+    try {
+      return await (this.transport.stream as NonNullable<Transport['stream']>)(payload, { onEvent: event => this.onStreamEvent(event), action })
+    } finally {
+      this.patchAssistant({ live: null })
+    }
+  }
+
+  private onStreamEvent(event: StreamEvent): void {
+    const live = this.state.assistant.live
+    if (!live) return
+    if (event.type === 'text') {
+      this.patchAssistant({ live: { ...live, text: live.text + event.delta } })
+    } else if (event.type === 'step') {
+      // A new model step after some text starts a new paragraph.
+      if (event.turn > 0 && live.text && !live.text.endsWith('\n\n')) this.patchAssistant({ live: { ...live, text: `${live.text}\n\n` } })
+    } else if (event.type === 'tool') {
+      const tool: ToolUse = {
+        name: event.name,
+        title: event.title,
+        error: event.status === 'error',
+        ...(event.status === 'skipped' ? { skipped: true } : {}),
+        ...(event.status === 'running' || event.status === 'waiting' ? { running: true } : {}),
+        id: event.id,
+      }
+      const index = live.tools.findIndex(item => item.id === event.id)
+      const tools = index === -1 ? [...live.tools, tool] : live.tools.map((item, i) => (i === index ? tool : item))
+      this.patchAssistant({ live: { ...live, tools } })
     }
   }
 
@@ -193,7 +328,9 @@ export class AiKitStore {
     this.patchAssistant({ busy: true, error: '', reason: null })
     const before = assistant.messages
     try {
-      const view = await this.transport.request<ChatView>('assistant/decide', { approve, context })
+      const view = this.streams()
+        ? await this.streamTurn({ approve, context }, 'decide')
+        : await this.transport.request<ChatView>('assistant/decide', { approve, context })
       this.applyView(view, 'decide')
       this.patchAssistant({ busy: false })
       this.emit({ type: approve ? 'approved' : 'rejected', name })

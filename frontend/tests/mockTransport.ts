@@ -1,6 +1,7 @@
-import { AiKitError, type AiKitAction, type Transport } from '../src/core/transport'
+import { attachmentKindOf } from '../src/core/store'
+import { AiKitError, type AiKitAction, type StreamOptions, type Transport, type UploadOptions } from '../src/core/transport'
 import type {
-  ActivityPage, AiKitBootstrap, ApiKeyRecord, AssistantState, AuditEvent, ChatMessage, ChatView, ConversationList,
+  ActivityPage, AiKitBootstrap, Attachment, ApiKeyRecord, AssistantState, AuditEvent, ChatMessage, ChatView, ConversationList,
   ConversationSummary, McpState, OAuthConnection, PendingAction, RequirementCheck, ToolInfo,
 } from '../src/core/types'
 
@@ -63,6 +64,10 @@ export interface MockOptions {
   latency?: number
   /** Throw this for the given actions. */
   fail?: Partial<Record<AiKitAction, AiKitError>>
+  /** Refuse every upload with this. */
+  uploadError?: AiKitError
+  /** Offer `transport.stream`: the reply's tools, then its text word by word, before the view. */
+  stream?: boolean
 }
 
 export interface MockTransport {
@@ -73,6 +78,8 @@ export interface MockTransport {
   assistantState: AssistantState
   mcpState: McpState
   activity: AuditEvent[]
+  /** Files uploaded and not deleted, by id. */
+  uploads: Map<string, Attachment>
   /** Seed a conversation. */
   seed(conversation: Partial<StoredConversation> & { title: string }): StoredConversation
   /** Record an audit event. */
@@ -91,6 +98,7 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
   let nextId = 1
   let nextKey = 1
   const calls: MockTransport['calls'] = []
+  const uploads = new Map<string, Attachment>()
   const activity: AuditEvent[] = []
   const apiKeys: ApiKeyRecord[] = []
   let connections: OAuthConnection[] = [
@@ -169,7 +177,8 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
       case 'assistant/view':
         return view()
       case 'assistant/chat': {
-        const message = String(payload.message || '').trim()
+        const files = Array.isArray(payload.attachments) ? payload.attachments as string[] : []
+        const message = String(payload.message || '').trim() || (files.length ? 'Please look at the attached file.' : '')
         if (!message) throw new AiKitError('Type a message first.', 'ai_empty_message', 400, null)
         if (!assistantState.settings.enabled) refuse('The AI assistant is switched off.', 'disabled')
         if (!assistantState.engine) refuse(assistantState.engine_reason || 'No AI engine is set up.', 'no_engine')
@@ -179,7 +188,8 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
           row = seed({ title: message.slice(0, 80), context: (payload.context as Record<string, unknown>)?.about as Record<string, unknown> || {} })
           activeId = row.id
         }
-        row.messages = [...row.messages, { role: 'user', text: message }]
+        const sent = files.map(id => uploads.get(id)).filter((file): file is Attachment => !!file).map(({ id, name, kind, size }) => ({ id, name, kind, size }))
+        row.messages = [...row.messages, { role: 'user', text: message, ...(sent.length ? { attachments: sent } : {}) }]
         const reply = options.reply ? options.reply(message, (payload.context as Record<string, unknown>) || {}) : { text: `You said: ${message}` }
         return applyReply(row, reply)
       }
@@ -191,6 +201,9 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
         row!.pending = null
         return applyReply(row!, reply)
       }
+      case 'assistant/attachments/delete':
+        uploads.delete(String(payload.id))
+        return { deleted: true }
       case 'assistant/reset':
         activeId = null
         return view()
@@ -298,6 +311,36 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
       const result = await handle(action, payload)
       return (result === undefined ? result : JSON.parse(JSON.stringify(result))) as T
     },
+    ...(options.stream ? {
+      async stream(payload: Record<string, unknown>, streamOptions: StreamOptions): Promise<ChatView> {
+        const decide = streamOptions.action === 'decide'
+        calls.push({ action: (decide ? 'assistant/decide/stream' : 'assistant/stream') as AiKitAction, payload })
+        const view = await handle(decide ? 'assistant/decide' : 'assistant/chat', payload) as ChatView
+        const last = view.messages[view.messages.length - 1]
+        const wait = () => new Promise(resolve => setTimeout(resolve, options.latency || 0))
+        streamOptions.onEvent({ type: 'step', turn: 0 })
+        for (const [i, tool] of (last?.tools || []).entries()) {
+          streamOptions.onEvent({ type: 'tool', id: `t${i}`, name: tool.name, title: tool.title, status: 'running' })
+          await wait() // eslint-disable-line no-await-in-loop
+          streamOptions.onEvent({ type: 'tool', id: `t${i}`, name: tool.name, title: tool.title, status: tool.error ? 'error' : 'ok' })
+        }
+        for (const word of (last?.text || '').split(/(?<= )/)) {
+          streamOptions.onEvent({ type: 'text', delta: word })
+          await wait() // eslint-disable-line no-await-in-loop
+        }
+        return JSON.parse(JSON.stringify(view)) as ChatView
+      },
+    } : {}),
+    async upload(file: File, uploadOptions: UploadOptions = {}): Promise<Attachment> {
+      calls.push({ action: 'assistant/attachments' as AiKitAction, payload: { name: file.name } })
+      uploadOptions.onProgress?.(0.5)
+      if (options.latency) await new Promise(resolve => setTimeout(resolve, options.latency))
+      if (options.uploadError) throw options.uploadError
+      const attachment: Attachment = { id: `att${uploads.size + 1}`, name: file.name, kind: attachmentKindOf(file.name) || 'text', size: file.size, mime: file.type || 'text/plain', created: Math.floor(Date.now() / 1000) }
+      uploads.set(attachment.id, attachment)
+      uploadOptions.onProgress?.(1)
+      return attachment
+    },
   }
 
   return {
@@ -309,6 +352,7 @@ export function createMockTransport(options: MockOptions = {}): MockTransport {
     assistantState,
     mcpState,
     activity,
+    uploads,
     seed,
     audit,
   }

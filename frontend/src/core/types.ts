@@ -170,11 +170,53 @@ export interface ToolUse {
   name: string
   title: string
   error: boolean
+  /** Not run at all: more calls at once than one step allows, or another action was waiting for approval. */
+  skipped?: boolean
+  /** A streamed turn: still running (or waiting for approval). */
+  running?: boolean
+  /** A streamed turn: the call's id, to update its status. */
+  id?: string
+}
+
+/** What a file is to the AI: an image, a PDF, a Word document or plain text. */
+export type AttachmentKind = 'image' | 'pdf' | 'docx' | 'text'
+
+/** A file the site keeps for the user's next message (a day at most). */
+export interface Attachment {
+  id: string
+  name: string
+  mime: string
+  kind: AttachmentKind
+  size: number
+  created: number
+}
+
+/** A file as a sent message shows it. */
+export interface AttachmentRef {
+  id: string
+  name: string
+  kind: AttachmentKind
+  size: number
+  /** The file was deleted from the site after its time there; the AI no longer gets it. */
+  expired?: boolean
+}
+
+/** What the composer checks before uploading (`bootstrap.attachments`). */
+export interface AttachmentRules {
+  /** For the file picker: `.png,.jpg,…`, only kinds the current engine reads. */
+  accept: string
+  kinds: AttachmentKind[]
+  maxFiles: number
+  maxTotalBytes: number
+  maxBytes: Partial<Record<AttachmentKind, number>>
+  ttlHours: number
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
+  /** Files sent with a user message. */
+  attachments?: AttachmentRef[]
   tools?: ToolUse[]
   /** Set on the optimistic copy of a message the server has not answered yet. */
   optimistic?: boolean
@@ -268,12 +310,20 @@ export interface AiKitBootstrap {
   user: { id: number, locale: string }
   settingsUrl: string | null
   docsUrl: string | null
+  /** Upload rules; null when the plugin has no attachments or the user may not upload. */
+  attachments?: AttachmentRules | null
   /** Host additions through `uiBootstrapHook`. */
   [extra: string]: unknown
 }
 
 /** Which request a chat view answered: `view` is the first load, `chat` / `decide` a turn. */
 export type ReplySource = 'view' | 'chat' | 'decide' | 'reset' | 'open' | 'forget' | 'update'
+
+/** What a streamed turn reports while it runs (`transport.stream`). */
+export type StreamEvent =
+  | { type: 'step', turn: number }
+  | { type: 'text', delta: string }
+  | { type: 'tool', id: string, name: string, title: string, status: 'running' | 'ok' | 'error' | 'skipped' | 'waiting' }
 
 export type AiKitEvent =
   | { type: 'pending', name: string, pending: PendingAction }
