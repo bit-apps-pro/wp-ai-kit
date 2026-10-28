@@ -57,6 +57,12 @@ use BitApps\AiKit\Tools\ToolRunner;
  */
 final class Kit
 {
+    /**
+     * Options the kit stores, by key under the plugin's prefix; removeSiteData()
+     * deletes them. A new option is added here too (KitTest checks every name the
+     * kit uses). The tables' version stamp goes with the tables.
+     */
+    public const OWNED_OPTIONS = ['mcp_settings', 'ai_settings', 'ai_credentials', 'mcp_api_keys', 'mcp_oauth_clients', 'mcp_oauth_grants', 'ai_audit_log'];
 
     /** Expiry choices a settings screen offers, in days; null = never. */
     public const API_KEY_EXPIRY_DAYS = [7, 30, 90, 365, null];
@@ -237,7 +243,49 @@ final class Kit
     {
         if (\function_exists('wp_clear_scheduled_hook')) {
             wp_clear_scheduled_hook($this->purgeHook());
+            wp_clear_scheduled_hook($this->attachmentsPurgeHook());
         }
+    }
+
+    /**
+     * Remove everything the kit keeps on this site: settings, keys, tokens, chats,
+     * attached files, scheduled work and its tables. For the plugin's uninstall;
+     * removeSiteData() does the same without a booted kit.
+     */
+    public function uninstall(bool $dropTables = true): void
+    {
+        self::removeSiteData($this->context, $dropTables);
+    }
+
+    /**
+     * Everything the kit keeps on the current site, removed: its options (settings,
+     * provider keys, API keys, OAuth clients and grants, the option-stored activity
+     * log), each user's chats and open-chat pointer in user meta, attached files,
+     * scheduled work and, with $dropTables, its tables (chat history and activity
+     * log) with their version stamp. Short-lived transients (rate limits, one-time
+     * codes, reply locks) are left to expire.
+     *
+     * Static so a plugin's uninstall can call it without booting the kit: it reads
+     * only the context's prefix and storage. On a network, call it for each site.
+     * A plugin that lets users keep their data passes its own setting as $dropTables.
+     */
+    public static function removeSiteData(PluginContext $context, bool $dropTables = true): void
+    {
+        if (\function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook($context->optionName('aikit_purge'));
+            wp_clear_scheduled_hook($context->optionName('aikit_attachments_purge'));
+        }
+        if ($dropTables) {
+            (new Tables($context))->uninstall();
+        }
+        (new AttachmentStore($context))->removeAll();
+
+        foreach (self::OWNED_OPTIONS as $option) {
+            delete_option($context->optionName($option));
+        }
+        $metaKey = self::conversationMetaKey($context);
+        delete_metadata('user', 0, $metaKey, '', true);
+        delete_metadata('user', 0, $metaKey . '_active', '', true);
     }
 
     /** init: keep the tables current and the daily purge scheduled (storage `tables` only). */

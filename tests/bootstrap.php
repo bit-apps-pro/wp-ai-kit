@@ -535,6 +535,18 @@ function delete_user_meta($userId, $key, $value = '')
     return true;
 }
 
+/** User meta only, the way uninstall calls it: one key for every user. */
+function delete_metadata($type, $objectId, $key, $value = '', $deleteAll = false)
+{
+    foreach (AiKitTestState::$userMeta as $userId => $meta) {
+        if ('user' === $type && ($deleteAll || (int) $userId === (int) $objectId)) {
+            unset(AiKitTestState::$userMeta[$userId][$key]);
+        }
+    }
+
+    return true;
+}
+
 function get_user_locale($user = 0)
 {
     return 'en_US';
