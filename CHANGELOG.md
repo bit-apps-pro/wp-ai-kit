@@ -6,6 +6,96 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-28
+
+### Added
+- `Kit::removeSiteData(PluginContext $context, bool $dropTables = true)`: everything the kit keeps on a site
+  (its options in `Kit::OWNED_OPTIONS`, each user's conversation user meta, attached files, scheduled purges
+  and, with `$dropTables`, its tables), for the plugin's uninstall, without booting the kit. A plugin no longer
+  keeps its own list of the kit's names. `Kit::uninstall()` now does the same and takes `$dropTables`; it used
+  to leave the options and user meta to the plugin.
+- Attachments for the assistant (opt-in `FEATURE_ATTACHMENTS`): images, PDF, Word (`.docx`) and text files
+  on a message. Routes `POST assistant/attachments` and `DELETE assistant/attachments/{id}`; private
+  per-user storage under uploads, removed after 24 hours (hourly cron) or with the conversation; content
+  checks against the extension; files named on disk by an HMAC of their id with the site salt; limits through `bitapps_ai_attachment_limits_<slug>`. Claude, OpenAI, Gemini
+  and the WordPress AI Client receive images and PDFs natively; Word and text go as untrusted text.
+  `Kit::uiBootstrap()` adds `attachments` (rules for the current engine). `Assistant::chat()` takes the ids
+  as a new last parameter.
+- `Kit::uninstall()`: removes the kit's tables and its attachments folder.
+- Attached photos (JPEG, PNG, WebP) lose their EXIF (GPS, camera), XMP, IPTC and text metadata when stored,
+  without re-encoding; a JPEG keeps its orientation (`Ai\Attachments\ImageMetadata`; filter
+  `bitapps_ai_attachment_strip_metadata_<slug>`, `Contract::stripImageMetadataHook()`).
+- Attachment uploads (refusals with their reason) and removals are audit-log rows, `attachment.uploaded` /
+  `attachment.deleted` with the attachment id (`AssistantController::AUDIT_UPLOADED` / `AUDIT_DELETED`).
+- Chat view: a sent file the site no longer keeps has `expired: true`; the UI marks it "expired" (`AttachmentRef.expired`).
+- OpenAI-compatible provider (`openai_compatible`): any service with OpenAI's Chat Completions API at a base URL the
+  manager sets (`base_url` in the assistant settings; https and a public host only, refused with 422 otherwise). The
+  saved key is cleared when the URL changes. `Ai\Providers\ChatCompletionsProvider` holds the shared wire format.
+- Streamed replies (opt-in `FEATURE_STREAM`): `POST assistant/stream` and, for approvals, `POST assistant/decide/stream`
+  answer with server-sent events (`step`, `text`, `tool`, `done`); Claude, OpenAI, OpenAI-compatible and Gemini
+  (`streamGenerateContent`) engines stream through WordPress's HTTP API (`requests-request.progress`, still
+  `wp_safe_remote_post()`), the WordPress AI Client sends each step at once. An approved action reports itself as a
+  `tool` event (running, then ok or error) before the rest of the turn.
+  `Engine\SupportsStreaming`, `AgentLoop::onProgress()`, `Assistant::onProgress()`; UI: `Transport.stream()`, the
+  store's `live` turn and a live reply bubble. `uiBootstrap()` `features.stream` reports it.
+- antd adapter: menus open from the keyboard, `aria-expanded` / `aria-haspopup` / `aria-controls` reach antd's
+  Button (also new on `ButtonProps`), and `useAntdTheme()` maps shadows, control height, line height and the code
+  font as well.
+- UI: the composer's attach button, drag-and-drop, paste, file chips with progress and errors, and the files on
+  sent messages (`Transport.upload()`, store `attach()` / `detach()`, `attachmentKindOf()`).
+
+### Changed
+- UI: in the chat history one scroll holds every chat: the search box, New chat and "Delete all chats" stay in view, and the Archived heading sticks to the bottom of the scroll while closed; opened, its chats follow the live ones in the same scroll.
+- UI: the default `Menu` slot opens its list with fixed positioning next to the trigger (above it when there is no room below), so a scrolling parent such as the chat history no longer clips a row's actions.
+- UI: the connect guide's server URL row is at most 440px wide instead of the whole card (the Overview row was already capped). ADOPTION notes how slot components size themselves inside `.aikit`.
+- The MCP screen's "Recent activity" (`adminState()['recent']`) lists only calls from outside the assistant (MCP, Abilities API, WP-CLI); the assistant's settings page keeps showing its own. The full activity log still shows every channel.
+- UI: chat history shows the Archived section only when there are archived chats (its count is fetched with
+  the list), and the toggle always shows the count.
+- UI: a request for a new chat (`aiKitBus(slug).open({ newChat: true })`) made while switching chats is
+  blocked (`switchBlockedReason`) now waits, with the reason shown, and runs in a new chat once unblocked.
+  It used to be sent into the current chat.
+- UI: the chat header shows the open chat's name, with the assistant's name next to the engine below it; the
+  composer's attach icon stands upright, sits next to the hint and uses the muted text colour.
+- UI: "New chat" in the chat header is an icon button (a speech bubble with a plus, `new-chat` in the icon set);
+  its name stays "New chat" for screen readers and as its tooltip.
+- UI: chat history opened again shows the last list at once and refreshes it behind (a spinner only on the first
+  load and for the next page); the Archived section keeps its last count instead of flashing in on every opening.
+  More space between the chat name and the line under it.
+- UI: the tools behind a reply show as one line ("Used List forms, Search entries ×27 · 2 failed") with the
+  per-tool counts behind Details, and steps where the assistant only used tools fold into the reply that follows
+  (`toolActivity`: `summary` default, `chips` for the old badges, `hidden`). Calls refused for the per-step cap or
+  while an action waits are marked `skipped` in the chat view and counted as "not run", apart from failures.
+- The shared system prompt no longer names forms and entries ("naming the IDs of the records you used").
+- UI: the @ and / menus point screen readers at the highlighted row (`aria-activedescendant`); the chat
+  announces a finished reply once through a status region instead of re-reading the transcript on every
+  streamed word; "Loading", "Close", "Copy" and "Copied" in the default components are translatable.
+- UI: the message for a cut-off stream no longer claims the chat was saved.
+
+### Fixed
+- A reply that fails after tools ran (an approved action, or tool steps before a provider error) keeps those
+  steps in the chat: the action's result is saved, the chat shows it, and the next message no longer fails on
+  a tool call without its result. Before every model call, any tool call stored without results (a chat saved
+  by an earlier version) is answered "not run", which repairs chats left broken.
+- A reply is saved in the chat it started in. Opening another chat (in another tab, say) while it ran used to
+  overwrite that chat with this one's messages. One reply runs per user at a time; a second one sent meanwhile
+  is refused with `turn_running`.
+- Images and PDFs from earlier messages are re-sent only while they fit one message's size limit, newest
+  first; older ones become a note. A long chat with several large files no longer makes every later request
+  fail on the provider's size limit or PHP's memory.
+- Streamed replies may take 300 seconds (`AbstractProvider::STREAM_TIMEOUT`), so a long answer that is already
+  showing does not fail at the 90-second limit of a plain call.
+- UI: Enter that ends an input method composition (Japanese, Chinese, Korean…) no longer sends the message.
+- UI: the default `Modal` asks the host to close once on Escape (it was twice) and returns focus to what opened
+  it; `Panel` returns focus too.
+
+### Security
+- Deleting a WordPress user deletes their assistant chats and attached files (`delete_user`), and the kit
+  registers a personal-data exporter and eraser for them (Tools → Export / Erase Personal Data), keyed
+  `<slug>-ai-chats`. Plugins that registered their own for the kit's conversations can drop them.
+- Only users who may manage the settings see the provider keys' last characters and the OpenAI-compatible base
+  URL in `GET settings/assistant`; other assistant users see only whether a key is set.
+- Calls to the AI providers no longer follow redirects, so the API key header cannot reach another host.
+
 ## [1.2.0] - 2026-10-27
 
 ### Added
@@ -185,7 +275,9 @@ First release.
 - `PluginContext::create()` threw an unqualified `InvalidArgumentException` (a fatal) for non-string
   `instructions`.
 
-[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.0.0...v1.1.0

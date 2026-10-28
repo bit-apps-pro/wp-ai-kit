@@ -1,6 +1,6 @@
 {
   "name": "@bitapps/wp-ai-kit-ui",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Headless store, hooks and themeable React components for the Bit Apps WP AI Kit: the in-admin AI assistant chat, conversation history, and the AI / MCP settings screens.",
   "license": "GPL-2.0-or-later",
   "author": {
