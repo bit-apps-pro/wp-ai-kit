@@ -2,11 +2,13 @@
 
 namespace BitApps\AiKit\Ai\Providers;
 
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
+
 /**
  * Google Gemini generateContent API. Gemini accepts only a subset of JSON
  * Schema, so tool schemas are reduced to the keys it knows.
  */
-final class GeminiProvider extends AbstractProvider
+final class GeminiProvider extends AbstractProvider implements SupportsAttachments
 {
     public const KEY = 'gemini';
 
@@ -24,7 +26,29 @@ final class GeminiProvider extends AbstractProvider
         return 'Google Gemini';
     }
 
+    public function attachmentKinds(): array
+    {
+        return ['image', 'pdf'];
+    }
+
+    public function maxAttachmentBytes(): int
+    {
+        return 15 * 1024 * 1024;
+    }
+
     public function send(array $messages, array $tools, string $system, array $options): array
+    {
+        return $this->normalize($this->post($this->url($options, 'generateContent'), ['x-goog-api-key' => $this->apiKey], $this->payload($messages, $tools, $system, $options)));
+    }
+
+    /** @param array<string, mixed> $options */
+    private function url(array $options, string $method): string
+    {
+        return self::ENDPOINT . rawurlencode((string) $options['model']) . ':' . $method;
+    }
+
+    /** @return array<string, mixed> */
+    private function payload(array $messages, array $tools, string $system, array $options): array
     {
         $payload = [
             'contents'          => $this->toContents($messages),
@@ -44,9 +68,7 @@ final class GeminiProvider extends AbstractProvider
             }, $tools)]];
         }
 
-        $url = self::ENDPOINT . rawurlencode((string) $options['model']) . ':generateContent';
-
-        return $this->normalize($this->post($url, ['x-goog-api-key' => $this->apiKey], $payload));
+        return $payload;
     }
 
     /**
@@ -79,7 +101,7 @@ final class GeminiProvider extends AbstractProvider
         foreach ($messages as $message) {
             $role = (string) ($message['role'] ?? '');
             if ('user' === $role) {
-                $out[] = ['role' => 'user', 'parts' => [['text' => (string) ($message['content'] ?? '')]]];
+                $out[] = ['role' => 'user', 'parts' => isset($message['parts']) ? self::inlineParts((array) $message['parts']) : [['text' => (string) ($message['content'] ?? '')]]];
             } elseif ('assistant' === $role) {
                 $raw = $message['raw'] ?? null;
                 if (self::KEY === ($message['engine'] ?? null) && \is_array($raw) && !empty($raw['parts'])) {
@@ -102,6 +124,28 @@ final class GeminiProvider extends AbstractProvider
                 if ([] !== $parts) {
                     $out[] = ['role' => 'user', 'parts' => $parts];
                 }
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * A user message's parts (AttachmentEngine) as Gemini parts; files inline.
+     *
+     * @param array<int, array<string, mixed>> $parts
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function inlineParts(array $parts): array
+    {
+        $out = [];
+        foreach ($parts as $part) {
+            $type = (string) ($part['type'] ?? '');
+            if ('text' === $type && '' !== (string) ($part['text'] ?? '')) {
+                $out[] = ['text' => (string) $part['text']];
+            } elseif ('image' === $type || 'pdf' === $type) {
+                $out[] = ['inlineData' => ['mimeType' => (string) $part['mime'], 'data' => (string) $part['data']]];
             }
         }
 

@@ -4,9 +4,12 @@ namespace BitApps\AiKit;
 
 use BitApps\AiKit\Abilities\AbilitiesBridge;
 use BitApps\AiKit\Ai\Assistant;
+use BitApps\AiKit\Ai\Attachments\AttachmentStore;
 use BitApps\AiKit\Ai\ConversationRepositoryInterface;
 use BitApps\AiKit\Ai\ConversationStore;
 use BitApps\AiKit\Ai\Engine\CoreAiClientEngine;
+use BitApps\AiKit\Ai\Engine\EngineInterface;
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\UserMetaConversationRepository;
 use BitApps\AiKit\Audit\AuditLoggerInterface;
 use BitApps\AiKit\Audit\NullAuditLogger;
@@ -74,6 +77,8 @@ final class Kit
     private ?OAuthServer $oauth = null;
 
     private ?Tables $tables = null;
+
+    private ?AttachmentStore $attachmentStore = null;
 
     /** @var BearerResolverInterface[] resolvers added by features such as OAuth */
     private array $extraResolvers = [];
@@ -710,7 +715,8 @@ final class Kit
             $this->registry(),
             $this->conversations(),
             new RateLimiter($this->context->optionPrefix()),
-            $engineFactory ?? $this->engineFactory
+            $engineFactory ?? $this->engineFactory,
+            $this->attachments()
         );
     }
 
@@ -742,11 +748,15 @@ final class Kit
 
         $engine = null;
         $reason = null;
+        $engineObject = null;
         if ($assistantOn && $canUse) {
             $resolved = $this->assistant()->resolveEngine();
-            $engine = null !== $resolved['engine'] ? ['key' => $resolved['engine']->key(), 'label' => $resolved['engine']->label()] : null;
+            $engineObject = $resolved['engine'];
+            $engine = null !== $engineObject ? ['key' => $engineObject->key(), 'label' => $engineObject->label()] : null;
             $reason = $resolved['reason'];
         }
+        $attachments = $this->attachments();
+        $canUpload = $canUse && \function_exists('current_user_can') && current_user_can('upload_files');
 
         $brand = $this->context->service('brand');
         $icons = $this->context->icons();
@@ -763,7 +773,7 @@ final class Kit
             'nonce'     => wp_create_nonce('wp_rest'),
             'canUse'    => $canUse,
             'canManage' => $canUse && $this->context->canManage($userId),
-            'canUpload' => $canUse && \function_exists('current_user_can') && current_user_can('upload_files'),
+            'canUpload' => $canUpload,
             'features'  => [
                 'assistant'   => $assistantShipped,
                 'mcp'         => $this->context->provides(PluginContext::FEATURE_MCP) && !$this->features->isForcedOff(FeatureFlags::MCP_SERVER),
@@ -774,13 +784,14 @@ final class Kit
                 'apiKeys'     => $this->context->provides(PluginContext::FEATURE_API_KEYS),
                 'abilities'   => $this->context->provides(PluginContext::FEATURE_ABILITIES),
                 'mcpAdapter'  => $this->context->provides(PluginContext::FEATURE_MCP_ADAPTER),
-                'attachments' => false,
+                'attachments' => null !== $attachments,
                 'stream'      => false,
             ],
             'assistantOn'  => $assistantOn,
             'mcpOn'        => $this->context->provides(PluginContext::FEATURE_MCP) && $this->features->isEnabled(FeatureFlags::MCP_SERVER),
             'engine'       => $engine,
             'engineReason' => $reason,
+            'attachments'  => null !== $attachments && $canUpload ? self::attachmentRules($attachments, $engineObject) : null,
             'user'         => ['id' => $userId, 'locale' => \function_exists('get_user_locale') ? (string) get_user_locale() : 'en_US'],
             'settingsUrl'  => $this->context->url('settings'),
             'docsUrl'      => $this->context->url('docs'),
@@ -843,6 +854,36 @@ final class Kit
         return $this->abilities;
     }
 
+    /** Files attached to assistant messages; null unless the plugin ships the assistant with attachments. */
+    public function attachments(): ?AttachmentStore
+    {
+        if (!$this->context->provides(PluginContext::FEATURE_ASSISTANT) || !$this->context->provides(PluginContext::FEATURE_ATTACHMENTS)) {
+            return null;
+        }
+
+        return $this->attachmentStore ??= new AttachmentStore($this->context);
+    }
+
+    /** init: keep the hourly removal of expired attachments scheduled. */
+    public function onAttachmentsInit(): void
+    {
+        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->attachmentsPurgeHook())) {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', $this->attachmentsPurgeHook());
+        }
+    }
+
+    /** The hourly purge of attachments older than their time to live. */
+    public function onPurgeAttachments(): void
+    {
+        $this->attachments()?->purgeExpired();
+    }
+
+    /** `{option_prefix}aikit_attachments_purge`: the cron hook of the attachment purge. */
+    public function attachmentsPurgeHook(): string
+    {
+        return $this->context->optionName('aikit_attachments_purge');
+    }
+
     /**
      * Mirror tools into the Abilities API (and the MCP Adapter) only while the
      * MCP server is on, and only when something will use them: the "offer as
@@ -893,6 +934,40 @@ final class Kit
         (new WpMcpAdapterBridge($this->context, $this->abilities()))->createServer($adapter);
     }
 
+    /**
+     * What the composer checks before uploading: the file types, how many and how
+     * large, and which kinds the current engine reads (text always).
+     *
+     * @return array<string, mixed>
+     */
+    private static function attachmentRules(AttachmentStore $store, ?EngineInterface $engine): array
+    {
+        $limits = $store->limits();
+        $kinds = [AttachmentStore::KIND_TEXT, AttachmentStore::KIND_DOCX];
+        $maxTotal = (int) $limits['max_total_bytes'];
+        if ($engine instanceof SupportsAttachments) {
+            $kinds = array_merge($kinds, $engine->attachmentKinds());
+            if ($engine->maxAttachmentBytes() > 0) {
+                $maxTotal = min($maxTotal, $engine->maxAttachmentBytes());
+            }
+        }
+        $accept = [];
+        foreach (AttachmentStore::TYPES as $ext => $type) {
+            if (\in_array($type['kind'], $kinds, true)) {
+                $accept[] = '.' . $ext;
+            }
+        }
+
+        return [
+            'accept'        => implode(',', $accept),
+            'kinds'         => array_values(array_unique($kinds)),
+            'maxFiles'      => (int) $limits['max_files'],
+            'maxTotalBytes' => $maxTotal,
+            'maxBytes'      => (array) $limits['max_bytes'],
+            'ttlHours'      => (int) round((int) $limits['ttl'] / HOUR_IN_SECONDS),
+        ];
+    }
+
     private function piiMasker(): ?PiiMasker
     {
         $classifier = $this->context->service('pii_classifier');
@@ -916,6 +991,10 @@ final class Kit
      */
     private function registerHooks(): void
     {
+        if (null !== $this->attachments()) {
+            add_action('init', [$this, 'onAttachmentsInit'], 1, 0);
+            add_action($this->attachmentsPurgeHook(), [$this, 'onPurgeAttachments'], 10, 0);
+        }
         if ([] !== $this->tables()->wanted()) {
             add_action('init', [$this, 'onStorageInit'], 1, 0);
             add_action($this->purgeHook(), [$this, 'onPurge'], 10, 0);

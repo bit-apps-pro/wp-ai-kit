@@ -2,8 +2,11 @@
 
 namespace BitApps\AiKit\Ai;
 
+use BitApps\AiKit\Ai\Attachments\AttachmentStore;
+use BitApps\AiKit\Ai\Engine\AttachmentEngine;
 use BitApps\AiKit\Ai\Engine\CoreAiClientEngine;
 use BitApps\AiKit\Ai\Engine\EngineInterface;
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\Providers\ClaudeProvider;
 use BitApps\AiKit\Ai\Providers\GeminiProvider;
 use BitApps\AiKit\Ai\Providers\OpenAiProvider;
@@ -34,7 +37,8 @@ final class Assistant
         private ToolRegistry $registry,
         private ConversationStore $store,
         private RateLimiter $limiter,
-        ?callable $engineFactory = null
+        ?callable $engineFactory = null,
+        private ?AttachmentStore $attachments = null
     ) {
         $this->engineFactory = $engineFactory;
     }
@@ -78,14 +82,18 @@ final class Assistant
     /**
      * Send the user's message and run the loop.
      *
+     * @param array<string, mixed> $context       stored with a new conversation (e.g. the form it is about)
+     * @param string[]             $attachmentIds files the user uploaded for this message (AttachmentStore)
+     *
      * @return array<string, mixed> the chat view, or `error` + `reason`
      */
-    /**
-     * @param array<string, mixed> $context stored with a new conversation (e.g. the form it is about)
-     */
-    public function chat(int $userId, string $message, string $pageContext = '', array $context = []): array
+    public function chat(int $userId, string $message, string $pageContext = '', array $context = [], array $attachmentIds = []): array
     {
         $message = trim($message);
+        $attachmentIds = array_values(array_unique(array_filter(array_map('strval', $attachmentIds))));
+        if ('' === $message && [] !== $attachmentIds) {
+            $message = 'Please look at the attached file' . (\count($attachmentIds) > 1 ? 's' : '') . '.';
+        }
         if ('' === $message) {
             return $this->failure($userId, 'Type a message first.', 'empty_message');
         }
@@ -103,13 +111,19 @@ final class Assistant
             return $ready;
         }
 
+        // Checked before the daily budget counts the turn.
+        $attached = $this->attachedFiles($userId, $attachmentIds, $ready['engine']);
+        if (isset($attached['error'])) {
+            return $this->failure($userId, (string) $attached['error'], (string) $attached['reason']);
+        }
+
         $limited = $this->overDailyLimit($userId);
         if (null !== $limited) {
             return $limited;
         }
 
         $messages = $conversation['messages'];
-        $messages[] = ['role' => 'user', 'content' => $message, 'at' => time()];
+        $messages[] = ['role' => 'user', 'content' => $message, 'at' => time()] + ([] === $attached ? [] : ['attachments' => $attached]);
 
         return $this->execute($userId, $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->run($messages, $system, $call), $context);
     }
@@ -200,7 +214,9 @@ final class Assistant
     {
         if ('all' === $conversationId) {
             $this->store->deleteAll($userId);
+            $this->attachments?->deleteAllOfUser($userId);
         } else {
+            $this->forgetAttachmentsOf($userId, $conversationId);
             $this->store->delete($userId, $conversationId);
         }
 
@@ -230,7 +246,12 @@ final class Assistant
         foreach ($conversation['messages'] as $entry) {
             $role = (string) ($entry['role'] ?? '');
             if ('user' === $role) {
-                $items[] = ['role' => 'user', 'text' => (string) $entry['content']];
+                $items[] = ['role' => 'user', 'text' => (string) $entry['content']] + (empty($entry['attachments']) ? [] : ['attachments' => array_map(
+                    fn ($file) => ['id' => (string) ($file['id'] ?? ''), 'name' => (string) ($file['name'] ?? ''), 'kind' => (string) ($file['kind'] ?? ''), 'size' => (int) ($file['size'] ?? 0)]
+                        // Deleted after its time on the site: the AI no longer gets it either.
+                        + (null === $this->attachments?->get($userId, (string) ($file['id'] ?? '')) ? ['expired' => true] : []),
+                    (array) $entry['attachments']
+                )]);
             } elseif ('assistant' === $role) {
                 $tools = [];
                 foreach ((array) ($entry['tool_calls'] ?? []) as $toolCall) {
@@ -297,6 +318,10 @@ final class Assistant
     private function execute(int $userId, EngineInterface $engine, array $messages, string $pageContext, callable $step, array $context = []): array
     {
         $settings = $this->settings->read();
+        if (null !== $this->attachments) {
+            // Attached files go to the engine with the transcript, but are never stored in it.
+            $engine = new AttachmentEngine($engine, $this->attachments, $userId);
+        }
         $call = new ToolContext(ToolContext::CHANNEL_ASSISTANT, $userId, null, 'Assistant · ' . $engine->label(), null, false, (bool) $settings['allow_personal_data']);
         $loop = new AgentLoop($engine, $this->runner, (int) $settings['max_turns'], 4096, CoreAiClientEngine::KEY === $engine->key() ? '' : $this->settings->model($engine->key()));
 
@@ -338,6 +363,71 @@ final class Assistant
         }
 
         return $prompt;
+    }
+
+    /**
+     * The user's files for this message as the transcript keeps them (no content),
+     * or `error` + `reason` when one is missing, too many, too large together, or a
+     * kind the engine cannot read.
+     *
+     * @param string[] $ids
+     *
+     * @return array<int, array<string, mixed>>|array{error: string, reason: string}
+     */
+    private function attachedFiles(int $userId, array $ids, EngineInterface $engine): array
+    {
+        if ([] === $ids) {
+            return [];
+        }
+        if (null === $this->attachments) {
+            return ['error' => 'Attachments are not available here.', 'reason' => 'attachments_off'];
+        }
+
+        $limits = $this->attachments->limits();
+        if (\count($ids) > (int) $limits['max_files']) {
+            return ['error' => 'Attach at most ' . (int) $limits['max_files'] . ' files to one message.', 'reason' => 'attachment_count'];
+        }
+
+        $readable = $engine instanceof SupportsAttachments ? $engine->attachmentKinds() : [];
+        $maxTotal = (int) $limits['max_total_bytes'];
+        $engineMax = $engine instanceof SupportsAttachments ? $engine->maxAttachmentBytes() : 0;
+        if ($engineMax > 0) {
+            $maxTotal = min($maxTotal, $engineMax);
+        }
+
+        $files = [];
+        $total = 0;
+        foreach ($ids as $id) {
+            $meta = $this->attachments->get($userId, $id);
+            if (null === $meta) {
+                return ['error' => 'An attached file is no longer available. Attach it again.', 'reason' => 'attachment_missing'];
+            }
+            $kind = (string) $meta['kind'];
+            if (\in_array($kind, [AttachmentStore::KIND_IMAGE, AttachmentStore::KIND_PDF], true) && !\in_array($kind, $readable, true)) {
+                return ['error' => 'The AI engine in use cannot read ' . (AttachmentStore::KIND_PDF === $kind ? 'PDF files' : 'images') . '. Attach text instead, or switch the engine in the assistant settings.', 'reason' => 'attachment_unsupported'];
+            }
+            $total += (int) $meta['size'];
+            $files[] = AttachmentStore::publicMeta($meta);
+        }
+        if ($maxTotal > 0 && $total > $maxTotal) {
+            return ['error' => 'The attached files are too large together for one message.', 'reason' => 'attachment_too_large'];
+        }
+
+        return $files;
+    }
+
+    /** Delete the files a conversation's messages refer to. */
+    private function forgetAttachmentsOf(int $userId, string $conversationId): void
+    {
+        if (null === $this->attachments) {
+            return;
+        }
+        $conversation = $this->store->repository()->find($userId, $conversationId);
+        foreach ((array) ($conversation['messages'] ?? []) as $entry) {
+            foreach ((array) ($entry['attachments'] ?? []) as $file) {
+                $this->attachments->delete($userId, (string) ($file['id'] ?? ''));
+            }
+        }
     }
 
     /** @return null|array<string, mixed> the failure when today's budget is used up */

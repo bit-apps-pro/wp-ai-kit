@@ -2,10 +2,12 @@
 
 namespace BitApps\AiKit\Ai\Providers;
 
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
+
 /**
  * Anthropic Messages API.
  */
-final class ClaudeProvider extends AbstractProvider
+final class ClaudeProvider extends AbstractProvider implements SupportsAttachments
 {
     public const KEY = 'claude';
 
@@ -23,7 +25,35 @@ final class ClaudeProvider extends AbstractProvider
         return 'Anthropic Claude';
     }
 
+    public function attachmentKinds(): array
+    {
+        return ['image', 'pdf'];
+    }
+
+    public function maxAttachmentBytes(): int
+    {
+        return 0;
+    }
+
     public function send(array $messages, array $tools, string $system, array $options): array
+    {
+        return $this->normalize($this->post(self::ENDPOINT, $this->headers(), $this->payload($messages, $tools, $system, $options)));
+    }
+
+    /** @return array<string, string> */
+    private function headers(): array
+    {
+        return ['x-api-key' => $this->apiKey, 'anthropic-version' => self::API_VERSION];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $messages
+     * @param array<int, array<string, mixed>> $tools
+     * @param array<string, mixed>             $options
+     *
+     * @return array<string, mixed>
+     */
+    private function payload(array $messages, array $tools, string $system, array $options): array
     {
         $payload = [
             'model'      => (string) $options['model'],
@@ -40,7 +70,7 @@ final class ClaudeProvider extends AbstractProvider
             ], $tools);
         }
 
-        return $this->normalize($this->post(self::ENDPOINT, ['x-api-key' => $this->apiKey, 'anthropic-version' => self::API_VERSION], $payload));
+        return $payload;
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -50,7 +80,7 @@ final class ClaudeProvider extends AbstractProvider
         foreach ($messages as $message) {
             $role = (string) ($message['role'] ?? '');
             if ('user' === $role) {
-                $out[] = ['role' => 'user', 'content' => (string) ($message['content'] ?? '')];
+                $out[] = ['role' => 'user', 'content' => isset($message['parts']) ? self::blocks((array) $message['parts']) : (string) ($message['content'] ?? '')];
             } elseif ('assistant' === $role) {
                 $raw = $message['raw'] ?? null;
                 $own = self::KEY === ($message['engine'] ?? null) && \is_array($raw) && [] !== $raw;
@@ -83,6 +113,30 @@ final class ClaudeProvider extends AbstractProvider
         }
 
         return $out;
+    }
+
+    /**
+     * A user message's parts (AttachmentEngine) as content blocks.
+     *
+     * @param array<int, array<string, mixed>> $parts
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function blocks(array $parts): array
+    {
+        $blocks = [];
+        foreach ($parts as $part) {
+            $type = (string) ($part['type'] ?? '');
+            if ('text' === $type && '' !== (string) ($part['text'] ?? '')) {
+                $blocks[] = ['type' => 'text', 'text' => (string) $part['text']];
+            } elseif ('image' === $type) {
+                $blocks[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => (string) $part['mime'], 'data' => (string) $part['data']]];
+            } elseif ('pdf' === $type) {
+                $blocks[] = ['type' => 'document', 'source' => ['type' => 'base64', 'media_type' => 'application/pdf', 'data' => (string) $part['data']], 'title' => (string) ($part['name'] ?? '')];
+            }
+        }
+
+        return $blocks;
     }
 
     /** @param array<string, mixed> $response */

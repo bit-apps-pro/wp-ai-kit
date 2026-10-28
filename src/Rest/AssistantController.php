@@ -2,8 +2,11 @@
 
 namespace BitApps\AiKit\Rest;
 
+use BitApps\AiKit\Ai\AiException;
+use BitApps\AiKit\Ai\Assistant;
 use BitApps\AiKit\Contract;
 use BitApps\AiKit\Kit;
+use BitApps\AiKit\Security\RateLimiter;
 
 /**
  * `/ai/assistant/*`: the chat panel. Sends a message, approves or cancels the
@@ -16,6 +19,11 @@ use BitApps\AiKit\Kit;
  */
 final class AssistantController
 {
+    /** Audit-trail names of the attachment events (in the tool column; the ID is the resource). */
+    public const AUDIT_UPLOADED = 'attachment.uploaded';
+
+    public const AUDIT_DELETED = 'attachment.deleted';
+
     /** Seconds per model call (the provider timeout) plus margin, times the allowed steps. */
     private const SECONDS_PER_STEP = 95;
 
@@ -32,15 +40,75 @@ final class AssistantController
     {
         $params = Response::params($request);
         $message = Response::string($params, 'message');
-        if ('' === trim($message)) {
+        if ('' === trim($message) && [] === Response::array($params, 'attachments')) {
             return Response::error('ai_empty_message', 'Type a message first.', 400);
         }
 
         $this->extendTimeLimit();
         $context = $this->chatContext($params, $request);
-        $view = $this->kit->assistant()->chat($this->userId(), $message, $context['summary'], $context['about']);
+        $attachments = array_values(array_filter(Response::array($params, 'attachments'), 'is_string'));
+        $view = $this->kit->assistant()->chat($this->userId(), $message, $context['summary'], $context['about'], $attachments);
 
         return $this->reply($view, $request);
+    }
+
+    /**
+     * POST multipart (`file`): keep one file for the user's next message. Needs the
+     * upload_files capability beside the plugin's own rule, and is rate limited.
+     *
+     * @param \WP_REST_Request $request
+     */
+    public function upload($request)
+    {
+        $store = $this->kit->attachments();
+        if (null === $store) {
+            return Response::error('ai_attachments_off', 'Attachments are not available here.', 404);
+        }
+        if (!current_user_can('upload_files')) {
+            return Response::error('ai_upload_forbidden', 'This account may not upload files.', 403);
+        }
+
+        $limits = $store->limits();
+        $attempt = (new RateLimiter($this->kit->context()->optionPrefix()))->attempt('attachments_' . $this->userId(), (int) $limits['uploads_per_window'], (int) $limits['window']);
+        if (!$attempt['allowed']) {
+            return Response::error('ai_rate_limited', 'Too many uploads. Try again in a few minutes.', 429, ['retry_after' => $attempt['retry_after']]);
+        }
+
+        $files = method_exists($request, 'get_file_params') ? $request->get_file_params() : [];
+        $file = \is_array($files['file'] ?? null) ? $files['file'] : null;
+        if (null === $file || !empty($file['error']) || !\is_string($file['tmp_name'] ?? null)) {
+            return Response::error('ai_upload_missing', 'The upload did not arrive. Try again.', 400);
+        }
+
+        $started = microtime(true);
+
+        try {
+            $attachment = $store->add($this->userId(), (string) ($file['name'] ?? 'file'), $file['tmp_name']);
+        } catch (AiException $error) {
+            $this->auditAttachment(self::AUDIT_UPLOADED, null, $error->reason(), $started);
+
+            return Response::error($error->reason(), $error->getMessage(), 422);
+        }
+        $this->auditAttachment(self::AUDIT_UPLOADED, (string) $attachment['id'], null, $started);
+
+        return Response::ok($attachment, 201);
+    }
+
+    /**
+     * DELETE an attachment the user no longer wants to send.
+     *
+     * @param \WP_REST_Request $request
+     */
+    public function deleteAttachment($request)
+    {
+        $store = $this->kit->attachments();
+        $id = Response::urlParam($request, 'id');
+        if (null === $store || !$store->delete($this->userId(), $id)) {
+            return Response::error('ai_attachment_not_found', 'That file no longer exists.', 404);
+        }
+        $this->auditAttachment(self::AUDIT_DELETED, $id, null, microtime(true));
+
+        return Response::ok(['deleted' => true]);
     }
 
     /** @param \WP_REST_Request $request */
@@ -142,6 +210,31 @@ final class AssistantController
         $view = $this->kit->assistant()->forget($this->userId(), $id);
 
         return Response::ok($this->decorated($view, $request));
+    }
+
+    /**
+     * An upload or removal in the audit trail: who, which attachment and how it
+     * ended (a refused file has its reason). Never the file's name or content.
+     */
+    private function auditAttachment(string $event, ?string $id, ?string $error, float $started): void
+    {
+        try {
+            $this->kit->auditLogger()->record([
+                'tool'        => $event,
+                'status'      => null === $error ? 'ok' : 'error',
+                'channel'     => 'assistant',
+                'user_id'     => $this->userId(),
+                'client_ref'  => null,
+                'resource_id' => $id,
+                'item_count'  => null === $error ? 1 : 0,
+                'args_digest' => null,
+                'error_code'  => $error,
+                'duration_ms' => (int) round((microtime(true) - $started) * 1000),
+                'created_at'  => gmdate('Y-m-d H:i:s'),
+            ]);
+        } catch (\Throwable $failure) {
+            $this->kit->context()->log('error', 'Audit write failed: ' . $failure->getMessage());
+        }
     }
 
     private function userId(): int
