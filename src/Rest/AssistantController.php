@@ -53,6 +53,80 @@ final class AssistantController
     }
 
     /**
+     * POST, as chat, answered as server-sent events while the turn runs: `text`
+     * (`delta`), `tool` (`name`, `title`, `status`), `step`, then `done` with the
+     * chat view and its `status` (422 for a refused turn, as chat answers).
+     * Anything refused before the turn starts is a plain JSON error.
+     *
+     * @param \WP_REST_Request $request
+     */
+    public function stream($request)
+    {
+        $params = Response::params($request);
+        if ('' === trim(Response::string($params, 'message')) && [] === Response::array($params, 'attachments')) {
+            return Response::error('ai_empty_message', 'Type a message first.', 400);
+        }
+
+        self::openStream();
+        $this->streamTo($request, self::eventWriter());
+
+        exit;
+    }
+
+    /**
+     * POST, as decide, answered as events like stream: the rest of the turn after
+     * an approval (or a cancel) shows as it runs.
+     *
+     * @param \WP_REST_Request $request
+     */
+    public function decideStream($request)
+    {
+        if (null === Response::bool(Response::params($request), 'approve')) {
+            return Response::error('ai_missing_decision', 'Say whether the action is approved.', 400);
+        }
+
+        self::openStream();
+        $this->decideStreamTo($request, self::eventWriter());
+
+        exit;
+    }
+
+    /**
+     * The streamed turn, written through $write (the REST route echoes it; tests collect it).
+     *
+     * @param \WP_REST_Request                             $request
+     * @param callable(string, array<string, mixed>): void $write
+     *
+     * @return array<string, mixed> the final chat view
+     */
+    public function streamTo($request, callable $write): array
+    {
+        $params = Response::params($request);
+        $context = $this->chatContext($params, $request);
+        $attachments = array_values(array_filter(Response::array($params, 'attachments'), 'is_string'));
+        $message = Response::string($params, 'message');
+
+        return $this->streamTurn($request, $write, fn (Assistant $assistant): array => $assistant->chat($this->userId(), $message, $context['summary'], $context['about'], $attachments));
+    }
+
+    /**
+     * The streamed rest of a turn after a decision, as streamTo().
+     *
+     * @param \WP_REST_Request                             $request
+     * @param callable(string, array<string, mixed>): void $write
+     *
+     * @return array<string, mixed> the final chat view
+     */
+    public function decideStreamTo($request, callable $write): array
+    {
+        $params = Response::params($request);
+        $approve = (bool) Response::bool($params, 'approve');
+        $context = $this->chatContext($params, $request);
+
+        return $this->streamTurn($request, $write, fn (Assistant $assistant): array => $assistant->decide($this->userId(), $approve, $context['summary']));
+    }
+
+    /**
      * POST multipart (`file`): keep one file for the user's next message. Needs the
      * upload_files capability beside the plugin's own rule, and is rate limited.
      *
@@ -213,6 +287,25 @@ final class AssistantController
     }
 
     /**
+     * @param \WP_REST_Request                             $request
+     * @param callable(string, array<string, mixed>): void $write
+     * @param callable(Assistant): array<string, mixed>    $turn
+     *
+     * @return array<string, mixed>
+     */
+    private function streamTurn($request, callable $write, callable $turn): array
+    {
+        $this->extendTimeLimit();
+        $assistant = $this->kit->assistant()->onProgress(static function (array $event) use ($write): void {
+            $write((string) $event['type'], $event);
+        });
+        $reply = $this->reply($turn($assistant), $request);
+        $write('done', ['status' => $reply->get_status(), 'view' => $reply->get_data()]);
+
+        return (array) $reply->get_data();
+    }
+
+    /**
      * An upload or removal in the audit trail: who, which attachment and how it
      * ended (a refused file has its reason). Never the file's name or content.
      */
@@ -234,6 +327,35 @@ final class AssistantController
             ]);
         } catch (\Throwable $failure) {
             $this->kit->context()->log('error', 'Audit write failed: ' . $failure->getMessage());
+        }
+    }
+
+    /** @return callable(string, array<string, mixed>): void one server-sent event, sent at once */
+    private static function eventWriter(): callable
+    {
+        return static function (string $event, array $data): void {
+            echo 'event: ' . $event . "\n" . 'data: ' . wp_json_encode($data) . "\n\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON in an event stream, not HTML.
+            if (ob_get_level() > 0) {
+                ob_flush();
+            }
+            flush();
+        };
+    }
+
+    /** Headers for an event stream, and no output buffering in the way. */
+    private static function openStream(): void
+    {
+        // The turn is saved even when the browser goes away halfway.
+        ignore_user_abort(true);
+        while (ob_get_level() > 0) {
+            ob_end_flush();
+        }
+        if (!headers_sent()) {
+            status_header(200);
+            header('Content-Type: text/event-stream; charset=utf-8');
+            header('Cache-Control: no-cache, no-store');
+            // nginx: do not buffer this response.
+            header('X-Accel-Buffering: no');
         }
     }
 

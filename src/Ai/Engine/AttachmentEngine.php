@@ -19,7 +19,7 @@ use BitApps\AiKit\Security\UntrustedContent;
  * a follow-up about the last screenshot still sees it, but files piling up over
  * a long chat do not grow every request past the provider's or PHP's limits.
  */
-final class AttachmentEngine implements EngineInterface, SupportsAttachments
+final class AttachmentEngine implements EngineInterface, SupportsAttachments, SupportsStreaming
 {
     public function __construct(private EngineInterface $inner, private AttachmentStore $store, private int $userId) {}
 
@@ -46,6 +46,18 @@ final class AttachmentEngine implements EngineInterface, SupportsAttachments
     public function send(array $messages, array $tools, string $system, array $options): array
     {
         return $this->inner->send($this->withAllFiles($messages), $tools, $system, $options);
+    }
+
+    public function canStream(): bool
+    {
+        return $this->inner instanceof SupportsStreaming && $this->inner->canStream();
+    }
+
+    public function stream(array $messages, array $tools, string $system, array $options, callable $onText): array
+    {
+        $messages = $this->withAllFiles($messages);
+
+        return $this->inner instanceof SupportsStreaming ? $this->inner->stream($messages, $tools, $system, $options, $onText) : $this->inner->send($messages, $tools, $system, $options);
     }
 
     /**

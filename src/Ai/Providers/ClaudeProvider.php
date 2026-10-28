@@ -2,12 +2,14 @@
 
 namespace BitApps\AiKit\Ai\Providers;
 
+use BitApps\AiKit\Ai\AiException;
 use BitApps\AiKit\Ai\Engine\SupportsAttachments;
+use BitApps\AiKit\Ai\Engine\SupportsStreaming;
 
 /**
  * Anthropic Messages API.
  */
-final class ClaudeProvider extends AbstractProvider implements SupportsAttachments
+final class ClaudeProvider extends AbstractProvider implements SupportsAttachments, SupportsStreaming
 {
     public const KEY = 'claude';
 
@@ -38,6 +40,77 @@ final class ClaudeProvider extends AbstractProvider implements SupportsAttachmen
     public function send(array $messages, array $tools, string $system, array $options): array
     {
         return $this->normalize($this->post(self::ENDPOINT, $this->headers(), $this->payload($messages, $tools, $system, $options)));
+    }
+
+    public function canStream(): bool
+    {
+        return true;
+    }
+
+    public function stream(array $messages, array $tools, string $system, array $options, callable $onText): array
+    {
+        $blocks = [];
+        $json = [];
+        $response = ['stop_reason' => 'end_turn', 'usage' => []];
+
+        $this->postStream(self::ENDPOINT, $this->headers(), $this->payload($messages, $tools, $system, $options) + ['stream' => true], static function (string $line) use (&$blocks, &$json, &$response, $onText): void {
+            $event = self::eventData($line);
+            if (null === $event) {
+                return;
+            }
+            $index = (int) ($event['index'] ?? 0);
+
+            switch ($event['type'] ?? '') {
+                case 'message_start':
+                    $response['usage'] = (array) ($event['message']['usage'] ?? []);
+
+                    break;
+
+                case 'content_block_start':
+                    $blocks[$index] = (array) ($event['content_block'] ?? []);
+                    $json[$index] = '';
+
+                    break;
+
+                case 'content_block_delta':
+                    $delta = (array) ($event['delta'] ?? []);
+                    $type = (string) ($delta['type'] ?? '');
+                    if ('text_delta' === $type) {
+                        $blocks[$index]['text'] = ($blocks[$index]['text'] ?? '') . (string) $delta['text'];
+                        $onText((string) $delta['text']);
+                    } elseif ('input_json_delta' === $type) {
+                        $json[$index] = ($json[$index] ?? '') . (string) ($delta['partial_json'] ?? '');
+                    } elseif ('thinking_delta' === $type) {
+                        $blocks[$index]['thinking'] = ($blocks[$index]['thinking'] ?? '') . (string) ($delta['thinking'] ?? '');
+                    } elseif ('signature_delta' === $type) {
+                        $blocks[$index]['signature'] = ($blocks[$index]['signature'] ?? '') . (string) ($delta['signature'] ?? '');
+                    }
+
+                    break;
+
+                case 'content_block_stop':
+                    // A tool's input arrives as JSON in pieces; the finished block holds it decoded, as send() returns it.
+                    if ('tool_use' === ($blocks[$index]['type'] ?? '')) {
+                        $input = json_decode('' !== ($json[$index] ?? '') ? $json[$index] : '{}', true);
+                        $blocks[$index]['input'] = \is_array($input) ? $input : [];
+                    }
+
+                    break;
+
+                case 'message_delta':
+                    $response['stop_reason'] = (string) ($event['delta']['stop_reason'] ?? $response['stop_reason']);
+                    $response['usage']['output_tokens'] = (int) ($event['usage']['output_tokens'] ?? 0);
+
+                    break;
+
+                case 'error':
+                    throw new AiException((string) ($event['error']['message'] ?? 'The AI provider stopped the reply.'), (string) ($event['error']['type'] ?? 'api_error'));
+            }
+        });
+
+        ksort($blocks);
+
+        return $this->normalize($response + ['content' => array_values($blocks)]);
     }
 
     /** @return array<string, string> */

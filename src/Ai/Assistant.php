@@ -27,6 +27,9 @@ final class Assistant
 {
     public const MAX_MESSAGE_CHARS = 4000;
 
+    /** @var null|callable(array<string, mixed>): void */
+    private $progress;
+
     /** @var null|callable(): ?EngineInterface test seam */
     private $engineFactory;
 
@@ -77,6 +80,19 @@ final class Assistant
             GeminiProvider::KEY => ['engine' => new GeminiProvider($key), 'reason' => null],
             default             => ['engine' => new ClaudeProvider($key), 'reason' => null],
         };
+    }
+
+    /**
+     * Report the next turns' progress (AgentLoop::onProgress()) as they run: for a
+     * streamed reply.
+     *
+     * @param null|callable(array<string, mixed>): void $listener
+     */
+    public function onProgress(?callable $listener): self
+    {
+        $this->progress = $listener;
+
+        return $this;
     }
 
     /**
@@ -323,7 +339,7 @@ final class Assistant
             $engine = new AttachmentEngine($engine, $this->attachments, $userId);
         }
         $call = new ToolContext(ToolContext::CHANNEL_ASSISTANT, $userId, null, 'Assistant · ' . $engine->label(), null, false, (bool) $settings['allow_personal_data']);
-        $loop = new AgentLoop($engine, $this->runner, (int) $settings['max_turns'], 4096, CoreAiClientEngine::KEY === $engine->key() ? '' : $this->settings->model($engine->key()));
+        $loop = (new AgentLoop($engine, $this->runner, (int) $settings['max_turns'], 4096, CoreAiClientEngine::KEY === $engine->key() ? '' : $this->settings->model($engine->key())))->onProgress($this->progress);
 
         try {
             $outcome = $step($loop, $this->systemPrompt($userId, $pageContext), $call);

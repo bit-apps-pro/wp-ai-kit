@@ -5,6 +5,7 @@ namespace BitApps\AiKit\Tests\Rest;
 use BitApps\AiKit\Contract;
 use BitApps\AiKit\Kit;
 use BitApps\AiKit\PluginContext;
+use BitApps\AiKit\Rest\AssistantController;
 use BitApps\AiKit\Rest\RestRoutes;
 use BitApps\AiKit\Tests\Ai\MemoryConversations;
 use BitApps\AiKit\Tests\Ai\ScriptedEngine;
@@ -179,6 +180,94 @@ final class RestRoutesTest extends TestCase
         self::assertSame(422, $failed->get_status(), 'a failed turn still carries the view');
         self::assertSame('no_pending', $failed->get_data()['reason']);
         self::assertCount(3, $failed->get_data()['messages'], 'user, the tool turn, the answer');
+    }
+
+    public function testAStreamedTurnReportsItsProgressThenTheView(): void
+    {
+        $this->boot();
+        self::assertArrayNotHasKey('/bit-demo/v1/ai/assistant/stream', \AiKitRest::$routes, 'streaming is opt-in');
+
+        resetAiKitTestState();
+        Kit::reset();
+        update_option('bit_demo_ai_settings', ['enabled' => true, 'access_level' => 'write']);
+        add_filter(Contract::toolProvidersHook('bit-demo'), static fn ($providers) => array_merge($providers, [[
+            ['name' => 'list-forms', 'title' => 'List forms', 'description' => 'Forms.', 'annotations' => ['readonly' => true], 'handler' => static fn () => ['items' => [['id' => 7]]]],
+        ]]), 10, 1);
+        $kit = Kit::boot($this->context([
+            'features' => [PluginContext::FEATURE_REST_UI => true, PluginContext::FEATURE_STREAM => true],
+            'can_use'  => static fn ($userId) => self::MEMBER === (int) $userId,
+            'services' => ['conversations' => $this->conversations],
+        ]));
+        $engine = $this->engine;
+        $kit->useEngineFactory(static fn () => $engine);
+        do_action('rest_api_init');
+        self::assertArrayHasKey('/bit-demo/v1/ai/assistant/stream', \AiKitRest::$routes);
+        self::assertTrue($kit->uiBootstrap()['features']['stream']);
+
+        \AiKitTestState::$currentUser = self::MEMBER;
+        $this->engine->script = [
+            ['text' => 'Looking.', 'tool_calls' => [['id' => 't1', 'name' => 'list-forms', 'input' => []]]],
+            ['text' => 'You have form 7.', 'tool_calls' => []],
+        ];
+        [, $request] = $this->endpoint('POST', '/assistant/stream', ['message' => 'Which forms?'], []);
+        $events = [];
+
+        $view = (new AssistantController($kit))->streamTo($request, static function (string $event, array $data) use (&$events): void {
+            $events[] = [$event, $data];
+        });
+
+        self::assertSame(['step', 'text', 'tool', 'tool', 'step', 'text', 'done'], array_column($events, 0));
+        self::assertSame('List forms', $events[2][1]['title']);
+        self::assertSame(200, end($events)[1]['status']);
+        self::assertSame('You have form 7.', end($view['messages'])['text']);
+        self::assertSame($view, end($events)[1]['view']);
+    }
+
+    public function testAnApprovedActionStreamsTheRestOfTheTurn(): void
+    {
+        resetAiKitTestState();
+        Kit::reset();
+        update_option('bit_demo_ai_settings', ['enabled' => true, 'access_level' => 'destructive', 'confirm_destructive' => true]);
+        $deleted = new \ArrayObject();
+        add_filter(Contract::toolProvidersHook('bit-demo'), static fn ($providers) => array_merge($providers, [[
+            ['name' => 'delete-form', 'title' => 'Delete form', 'description' => 'Delete.', 'annotations' => ['destructive' => true], 'handler' => static function () use ($deleted) {
+                $deleted[] = 7;
+
+                return ['deleted' => 7];
+            }],
+        ]]), 10, 1);
+        $kit = Kit::boot($this->context([
+            'features' => [PluginContext::FEATURE_REST_UI => true, PluginContext::FEATURE_STREAM => true],
+            'can_use'  => static fn ($userId) => self::MEMBER === (int) $userId,
+            'services' => ['conversations' => $this->conversations],
+        ]));
+        $engine = $this->engine;
+        $kit->useEngineFactory(static fn () => $engine);
+        do_action('rest_api_init');
+        self::assertArrayHasKey('/bit-demo/v1/ai/assistant/decide/stream', \AiKitRest::$routes);
+
+        \AiKitTestState::$currentUser = self::MEMBER;
+        $this->engine->script = [
+            ['text' => 'Deleting.', 'tool_calls' => [['id' => 't1', 'name' => 'delete-form', 'input' => []]]],
+            ['text' => 'Form 7 is deleted.', 'tool_calls' => []],
+        ];
+        $paused = $kit->assistant()->chat(self::MEMBER, 'Delete form 7');
+        self::assertNotNull($paused['pending']);
+
+        [, $request] = $this->endpoint('POST', '/assistant/decide/stream', ['approve' => true], []);
+        $events = [];
+        $view = (new AssistantController($kit))->decideStreamTo($request, static function (string $event, array $data) use (&$events): void {
+            $events[] = [$event, $data];
+        });
+
+        self::assertSame([7], $deleted->getArrayCopy(), 'the approved action ran');
+        self::assertSame(['tool', 'tool', 'step', 'text', 'done'], array_column($events, 0), 'the approved action runs, then the reply streams');
+        self::assertSame(['running', 'ok'], [$events[0][1]['status'], $events[1][1]['status']]);
+        self::assertSame('Delete form', $events[0][1]['title']);
+        self::assertSame('Form 7 is deleted.', end($view['messages'])['text']);
+        self::assertSame('done', end($events)[0]);
+        self::assertSame(200, end($events)[1]['status']);
+        self::assertNull($view['pending']);
     }
 
     public function testConversationsAreListedRenamedFlaggedOpenedAndForgotten(): void

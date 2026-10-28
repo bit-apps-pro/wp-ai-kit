@@ -785,7 +785,7 @@ final class Kit
                 'abilities'   => $this->context->provides(PluginContext::FEATURE_ABILITIES),
                 'mcpAdapter'  => $this->context->provides(PluginContext::FEATURE_MCP_ADAPTER),
                 'attachments' => null !== $attachments,
-                'stream'      => false,
+                'stream'      => $this->context->provides(PluginContext::FEATURE_STREAM),
             ],
             'assistantOn'  => $assistantOn,
             'mcpOn'        => $this->context->provides(PluginContext::FEATURE_MCP) && $this->features->isEnabled(FeatureFlags::MCP_SERVER),

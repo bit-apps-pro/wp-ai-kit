@@ -86,6 +86,33 @@ final class EnginesTest extends TestCase
         self::assertSame('Two forms.', $result['text'], 'thought parts are not the answer');
     }
 
+    public function testGeminiStreamsTextAndKeepsThePartsWhole(): void
+    {
+        $url = GeminiProvider::ENDPOINT . 'gemini-2.5-flash:streamGenerateContent?alt=sse';
+        $chunks = [
+            ['candidates' => [['content' => ['role' => 'model', 'parts' => [['text' => 'thinking…', 'thought' => true]]]]]],
+            ['candidates' => [['content' => ['role' => 'model', 'parts' => [['text' => 'Checking ']]]]]],
+            ['candidates' => [['content' => ['role' => 'model', 'parts' => [['text' => 'form 1.', 'thoughtSignature' => 'sig-1']]]]]],
+            ['candidates' => [['content' => ['role' => 'model', 'parts' => [['functionCall' => ['name' => 'get-form', 'args' => ['form_id' => 1]]]]]]], 'usageMetadata' => ['promptTokenCount' => 20, 'candidatesTokenCount' => 9]],
+        ];
+        $body = implode('', array_map(static fn ($chunk) => 'data: ' . json_encode($chunk) . "\r\n\r\n", $chunks));
+        \AiKitTestState::$httpResponses[$url] = ['response' => ['code' => 200], 'body' => $body, 'chunks' => str_split($body, 17)];
+
+        $pieces = [];
+        $result = (new GeminiProvider('g-key'))->stream(self::TRANSCRIPT, self::TOOLS, 'System.', ['model' => 'gemini-2.5-flash'], static function (string $delta) use (&$pieces): void {
+            $pieces[] = $delta;
+        });
+
+        self::assertSame(['Checking ', 'form 1.'], $pieces, 'thoughts are not streamed');
+        self::assertSame('Checking form 1.', $result['text']);
+        self::assertSame('get-form', $result['tool_calls'][0]['name']);
+        self::assertSame(['form_id' => 1], $result['tool_calls'][0]['input']);
+        self::assertSame(['input_tokens' => 20, 'output_tokens' => 9], $result['usage']);
+        // The next turn sends these parts back: one text part, with the signature on it.
+        self::assertSame(['text' => 'Checking form 1.', 'thoughtSignature' => 'sig-1'], $result['raw']['parts'][1]);
+        self::assertCount(3, $result['raw']['parts']);
+    }
+
     public function testProviderErrorsBecomeAiExceptions(): void
     {
         \AiKitTestState::$httpResponses[ClaudeProvider::ENDPOINT] = ['response' => ['code' => 401], 'body' => json_encode(['error' => ['type' => 'authentication_error', 'message' => 'invalid x-api-key']])];

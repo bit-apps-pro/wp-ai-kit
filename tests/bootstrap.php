@@ -549,6 +549,10 @@ function wp_safe_remote_post($url, $args = [])
 {
     AiKitTestState::$httpRequests[] = ['url' => $url, 'args' => $args];
     $response = AiKitTestState::$httpResponses[$url] ?? null;
+    // A streamed body arrives in chunks, as WordPress's HTTP API reports them.
+    foreach ((array) ($response['chunks'] ?? []) as $chunk) {
+        do_action('requests-request.progress', $chunk, 0, null);
+    }
 
     return null !== $response ? $response : new WP_Error('http_request_failed', 'No stubbed response.');
 }
