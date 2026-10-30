@@ -17,7 +17,8 @@ the kit provides everything around them:
 - bridges to the WordPress-native pieces **when they exist**: the Abilities API
   (core 6.9+) as a mirror of the tools, the WordPress MCP Adapter plugin as an
   additional server, and the core AI Client (7.0+) as the assistant engine — with
-  built-in Anthropic Claude, OpenAI and Google Gemini engines as fallback;
+  built-in Anthropic Claude, OpenAI, Google Gemini and OpenAI-compatible (Mistral, Groq,
+  OpenRouter…) engines as fallback, with streamed replies for Claude and OpenAI-style APIs;
 - an in-admin AI assistant (agent loop, conversation history, per-call confirmation)
   that runs the same tools;
 - optional admin REST routes and a React UI package, `@bitapps/wp-ai-kit-ui`
@@ -36,7 +37,7 @@ UI is optional: mount the components from `@bitapps/wp-ai-kit-ui` (see
 composer require bitapps/wp-ai-kit
 ```
 
-Require a released version (`^1.1`; see `CHANGELOG.md`) rather than `dev-main`.
+Require a released version (`^1.3`; see `CHANGELOG.md`) rather than `dev-main`.
 
 Each plugin prefixes the kit into its own namespace, like `bitapps/wp-kit`, so every
 plugin carries an isolated copy and two plugins on different kit versions coexist.
@@ -229,6 +230,8 @@ PluginContext::create([
 | `FEATURE_API_KEYS` (`api_keys`) | on | kit-issued MCP API keys |
 | `FEATURE_ABILITIES` (`abilities`) | on | offering the tools as WordPress abilities (WordPress 6.9+) |
 | `FEATURE_MCP_ADAPTER` (`mcp_adapter`) | on | listing the tools on the WordPress MCP Adapter plugin's server |
+| `FEATURE_STREAM` (`stream`) | **off** | streamed replies: `POST <ns>/ai/assistant/stream` and `…/decide/stream` (server-sent events), the text shows while the model writes and each tool as it runs |
+| `FEATURE_ATTACHMENTS` (`attachments`) | **off** | files attached to assistant messages (images, PDF, Word, text); see "Attachments" |
 
 A shipped part can still be switched off at run time, without code in the plugin:
 
@@ -248,6 +251,8 @@ for the chat panel and the settings screens, so the plugin writes no controllers
 | `GET assistant/view`, `POST assistant/chat`, `POST assistant/decide`, `POST assistant/reset` | The chat panel; a failed turn answers 422 with the conversation view (`error`, `reason`) |
 | `GET assistant/history?search&limit&offset&archived`, `POST assistant/conversations/{id}/open`, `PATCH …/{id}` (`title`, `pinned`, `archived`), `DELETE …/{id}` (or `all`) | Conversation history |
 | `GET/POST settings/assistant`, `GET/POST settings/mcp` | The settings screens (save as the form posts, flat or under `settings`) |
+| `POST assistant/stream`, `POST assistant/decide/stream` | As `assistant/chat` / `assistant/decide`, answered as server-sent events: `step`, `text` (`delta`), `tool` (`name`, `title`, `status`), then `done` (`status`, `view`). `stream` feature only |
+| `POST assistant/attachments` (multipart `file`), `DELETE assistant/attachments/{id}` | Files for the next message (`attachments` feature only; also needs `upload_files`) |
 | `GET mcp/state`, `GET/DELETE mcp/activity`, `GET/POST mcp/api-keys`, `DELETE mcp/api-keys/{id}`, `GET/DELETE mcp/connections[/{id}]` | The MCP screen |
 
 Authentication is WordPress's cookie session with an `X-WP-Nonce` (`wp_rest`) header. Every route needs
@@ -274,6 +279,7 @@ before reset/open/forget; `settingsSavedHook` after a save.
 | `bitapps_ai_settings_saved_<slug>` | action | `(string $which, array $settings)` after a save through the kit. |
 | `bitapps_ai_ui_bootstrap_<slug>`   | filter | `(array $bootstrap)`: what `Kit::uiBootstrap()` hands the UI. |
 | `bitapps_ai_rest_permission_<slug>` | filter | `(bool\|WP_Error $allowed, string $route, WP_REST_Request, string $level)` on every kit REST route for a signed-in user (`$level`: `use` or `manage`). |
+| `bitapps_ai_attachment_limits_<slug>` | filter | `(array $limits)`: file count, size caps per kind, text length, time to live and upload rate. |
 | `bitapps_ai_secret_keys`           | filter | Extra key names to redact from tool output.                                     |
 | `bitapps_ai_allowed_origins`       | filter | Browser origins allowed to call the MCP endpoint.                               |
 | `bitapps_ai_client_ip`             | filter | The client IP for rate limits behind a proxy or CDN.                            |
@@ -281,6 +287,36 @@ before reset/open/forget; `settingsSavedHook` after a save.
 Hosts can also force features off in `wp-config.php` with `<PREFIX>_MCP_DISABLED` /
 `<PREFIX>_AI_DISABLED`, where the prefix is the upper-cased option prefix without its
 trailing underscore (`BITFORMS_MCP_DISABLED`). See "Choosing features".
+
+## Attachments (opt-in)
+
+With `PluginContext::FEATURE_ATTACHMENTS => true` (and `rest_ui`), users can attach files to an assistant
+message: PNG, JPEG, GIF and WebP images, PDF, Word (`.docx`) and plain text (`.txt`, `.md`, `.csv`).
+
+- **Where they go.** Each upload is kept in `{uploads}/{option_prefix}aikit_attachments/{user id}/`, with
+  `.htaccess`, `web.config` and `index.html` guards, under names keyed with the site's salt, so the id the
+  browser holds does not give a file's path; the kit never hands out a URL to them. On nginx, which ignores
+  `.htaccess`, add `location ~ /[^/]+aikit_attachments/ { deny all; }` for a hard block. They
+  are removed after 24 hours by the hourly cron `{option_prefix}aikit_attachments_purge`, and with their
+  conversation when it is deleted.
+- **What is checked.** The extension must be on the list and agree with the file's content (`finfo`,
+  `wp_check_filetype_and_ext`, image decoding, the `%PDF-` header); text with script markers is refused;
+  a `.docx` must open as a Word document (PHP `zip` extension). Uploads are rate-limited per user.
+- **What the model gets.** Images and PDFs go to the provider as native parts when the engine reads them
+  (Claude, OpenAI, Gemini and the WordPress AI Client do); Word and text files go as text, marked as
+  untrusted content. The conversation stores only the file's name, kind and size; a sent file the site no longer
+  keeps shows as `expired` in the chat view (and in the chat).
+- **Photo metadata.** JPEG, PNG and WebP files lose their EXIF (GPS position, camera), XMP, IPTC and text
+  metadata when stored, without re-encoding; a JPEG keeps its orientation. Turn it off with
+  `bitapps_ai_attachment_strip_metadata_<slug>` (`(bool $strip, string $extension)`).
+- **Audit.** Uploads (also refused ones, with the reason) and removals are in the activity log as
+  `attachment.uploaded` / `attachment.deleted`, with the attachment id; never the file's name or content.
+- **Limits.** 5 files and 20 MB per message; images 5 MB, PDF 15 MB, Word 10 MB, text 1 MB and 200,000
+  characters. `Kit::uiBootstrap()` sends the rules for the current engine (`attachments`), so the picker
+  only offers what it can read. Change them with `bitapps_ai_attachment_limits_<slug>`.
+- **Uninstall.** `Kit::removeSiteData()` removes the attachments folder with the rest of the kit's data.
+
+MCP tools never see attachments.
 
 ## What the kit stores
 
@@ -291,7 +327,8 @@ All names start with the plugin's `option_prefix`:
   `ai_audit_log` (unless `audit` is replaced);
 - user meta `ai_conversation` and `ai_conversation_active` (`_<blog id>` added on
   multisite), unless `conversations` is replaced;
-- short-lived transients for rate limits, OAuth codes and confirmations.
+- short-lived transients for rate limits, OAuth codes and confirmations;
+- with `attachments`, the folder `{uploads}/{option_prefix}aikit_attachments/` (files kept 24 hours).
 
 ### Tables (`storage => tables`)
 
@@ -309,8 +346,8 @@ switches (settings, constants, filters) do not create or drop tables.
 ```php
 register_activation_hook(__FILE__, fn () => Kit::for('bit-connect')?->installTables());
 register_deactivation_hook(__FILE__, fn () => Kit::for('bit-connect')?->deactivate());
-// uninstall.php runs without the plugin booted: build the same context and boot it there.
-Kit::boot(MyPlugin::aiContext())->uninstallTables();   // drops both tables and the schema stamp
+// uninstall.php runs without the plugin booted: build the same context, no boot needed.
+Kit::removeSiteData(MyPlugin::aiContext());   // everything below, tables included
 ```
 
 Updates do not run activation hooks, so the kit also creates or upgrades the tables on the first request
@@ -324,9 +361,17 @@ A plugin with tables of its own (Bit Form: `{prefix}bitforms_ai_conversations` a
 `{prefix}bitforms_ai_audit_log`) passes them as the `conversations` and `audit` services instead; those
 win over `storage`.
 
-Delete the options and user meta in the plugin's uninstall routine (and call `uninstallTables()` with
-`storage => tables`). Provider keys are encrypted with the
-site's salts; define `AUTH_KEY` and friends in `wp-config.php`.
+### Uninstall
+
+`Kit::removeSiteData(PluginContext $context, bool $dropTables = true)` removes everything above on the
+current site: the options (`Kit::OWNED_OPTIONS`), each user's conversation user meta, the attachments folder,
+the scheduled purges and, with `$dropTables`, the tables and their schema stamp. Transients are left to
+expire. It needs no booted kit, only the plugin's context, so call it from `uninstall.php` or the uninstall
+hook, once per site on a network. A plugin that lets users keep their data on uninstall passes its setting
+as `$dropTables` (Bit Form: "delete tables"). The kit knows its own names, so an option a kit update adds is
+removed without a change in the plugin. `$kit->uninstall($dropTables)` is the same on a booted kit.
+
+Provider keys are encrypted with the site's salts; define `AUTH_KEY` and friends in `wp-config.php`.
 
 ## Documentation
 

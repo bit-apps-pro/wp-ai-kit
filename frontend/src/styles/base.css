@@ -157,6 +157,9 @@ a:where(.aikit, .aikit *) {
   cursor: pointer;
 }
 .aikit-tabs__tab[aria-selected="true"]:where(.aikit, .aikit *) { color: var(--aikit-accent); border-bottom-color: var(--aikit-accent); }
+/* Read by screen readers, not shown. */
+.aikit-sr-only:where(.aikit, .aikit *) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
 .aikit-tabs--segment:where(.aikit, .aikit *) { border: 0; gap: 4px; padding: 3px; background: var(--aikit-bg-muted); border-radius: var(--aikit-radius-sm); width: max-content; }
 .aikit-tabs--segment:where(.aikit, .aikit *) .aikit-tabs__tab { margin: 0; border: 0; border-radius: 4px; padding: 5px 12px; }
 .aikit-tabs--segment:where(.aikit, .aikit *) .aikit-tabs__tab[aria-selected="true"] { background: var(--aikit-bg); color: var(--aikit-fg); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
@@ -242,10 +245,12 @@ h3 > .aikit-help-tip:where(.aikit, .aikit *) { margin-left: 4px; }
 .aikit-help-tip__bubble--open:where(.aikit, .aikit *) { visibility: visible; opacity: 1; }
 
 .aikit-menu:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
+/* Fixed and placed by the Menu next to its trigger, so a scrolling parent cannot clip it; hidden until placed. */
 .aikit-menu__list:where(.aikit, .aikit *) {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  visibility: hidden;
   min-width: 160px;
   margin: 0;
   padding: 4px;
@@ -254,7 +259,7 @@ h3 > .aikit-help-tip:where(.aikit, .aikit *) { margin-left: 4px; }
   border-radius: var(--aikit-radius-sm);
   background: var(--aikit-bg);
   box-shadow: var(--aikit-shadow-pop);
-  z-index: 5;
+  z-index: 100;
 }
 .aikit-menu__item:where(.aikit, .aikit *) {
   display: flex;

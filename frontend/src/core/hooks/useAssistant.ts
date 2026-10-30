@@ -60,5 +60,7 @@ export function useAssistant(options: UseAssistantOptions = {}) {
     open: useCallback((id: string) => store.open(id), [store]),
     reload: useCallback(() => store.loadView(), [store]),
     setDraft: useCallback((draft: string) => store.setDraft(draft), [store]),
+    attach: useCallback((files: File[]) => store.attach(files), [store]),
+    detach: useCallback((localId: string) => store.detach(localId), [store]),
   }
 }

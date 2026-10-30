@@ -75,6 +75,9 @@ final class AiKitTestState
     /** @var array<string, array{timestamp: int, recurrence: string}> hook => event */
     public static array $cron = [];
 
+    /** wp_upload_dir()['basedir'] for this test (a fresh temp folder). */
+    public static string $uploadDir = '';
+
     public static function reset(): void
     {
         self::$options = [];
@@ -91,6 +94,7 @@ final class AiKitTestState
         self::$httpRequests = [];
         self::$userMeta = [];
         self::$cron = [];
+        self::$uploadDir = '';
         AiKitRest::$routes = [];
         if (class_exists('AiKitAbilities', false)) {
             AiKitAbilities::reset();
@@ -102,6 +106,50 @@ final class AiKitTestState
 function resetAiKitTestState(): void
 {
     AiKitTestState::reset();
+}
+
+// --- uploads -----------------------------------------------------------------
+
+function wp_upload_dir($time = null, $create = true, $refresh = false)
+{
+    if ('' === AiKitTestState::$uploadDir) {
+        AiKitTestState::$uploadDir = sys_get_temp_dir() . '/aikit-uploads-' . bin2hex(random_bytes(4));
+    }
+
+    return ['basedir' => AiKitTestState::$uploadDir, 'baseurl' => 'https://example.test/wp-content/uploads', 'error' => false];
+}
+
+function wp_mkdir_p($target)
+{
+    return is_dir($target) || mkdir($target, 0755, true);
+}
+
+function wp_delete_file($file)
+{
+    if (is_file($file)) {
+        unlink($file);
+    }
+}
+
+function sanitize_file_name($name)
+{
+    return trim((string) preg_replace('/[^A-Za-z0-9._-]+/', '-', (string) $name), '-');
+}
+
+/** WordPress's check, cut down: the extension's MIME type when the content agrees. */
+function wp_check_filetype_and_ext($file, $filename)
+{
+    $types = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp', 'pdf' => 'application/pdf'];
+    $ext = strtolower(pathinfo((string) $filename, PATHINFO_EXTENSION));
+    $type = $types[$ext] ?? false;
+    if (false !== $type && function_exists('finfo_open')) {
+        $real = finfo_file(finfo_open(FILEINFO_MIME_TYPE), $file);
+        if ($real !== $type) {
+            return ['ext' => false, 'type' => false, 'proper_filename' => false];
+        }
+    }
+
+    return ['ext' => false === $type ? false : $ext, 'type' => $type, 'proper_filename' => false];
 }
 
 // --- cron ------------------------------------------------------------------
@@ -487,6 +535,18 @@ function delete_user_meta($userId, $key, $value = '')
     return true;
 }
 
+/** User meta only, the way uninstall calls it: one key for every user. */
+function delete_metadata($type, $objectId, $key, $value = '', $deleteAll = false)
+{
+    foreach (AiKitTestState::$userMeta as $userId => $meta) {
+        if ('user' === $type && ($deleteAll || (int) $userId === (int) $objectId)) {
+            unset(AiKitTestState::$userMeta[$userId][$key]);
+        }
+    }
+
+    return true;
+}
+
 function get_user_locale($user = 0)
 {
     return 'en_US';
@@ -497,10 +557,33 @@ function get_bloginfo($show = '', $filter = 'raw')
     return 'name' === $show ? 'Example Site' : '';
 }
 
+function wp_parse_url($url, $component = -1)
+{
+    return parse_url($url, $component);
+}
+
+/** As core: false for a local or private host (no DNS here: literal addresses and localhost only). */
+function wp_http_validate_url($url)
+{
+    $host = (string) parse_url($url, PHP_URL_HOST);
+    if ('' === $host || 'localhost' === strtolower($host)) {
+        return false;
+    }
+    if (false !== filter_var($host, FILTER_VALIDATE_IP) && false === filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+        return false;
+    }
+
+    return $url;
+}
+
 function wp_safe_remote_post($url, $args = [])
 {
     AiKitTestState::$httpRequests[] = ['url' => $url, 'args' => $args];
     $response = AiKitTestState::$httpResponses[$url] ?? null;
+    // A streamed body arrives in chunks, as WordPress's HTTP API reports them.
+    foreach ((array) ($response['chunks'] ?? []) as $chunk) {
+        do_action('requests-request.progress', $chunk, 0, null);
+    }
 
     return null !== $response ? $response : new WP_Error('http_request_failed', 'No stubbed response.');
 }
@@ -575,6 +658,12 @@ function site_url($path = '', $scheme = null)
     return home_url($path, $scheme);
 }
 
+/** Users are user{ID}@example.test. */
+function get_user_by($field, $value)
+{
+    return 'email' === $field && preg_match('/^user(\d+)@example\.test$/', (string) $value, $match) ? get_userdata((int) $match[1]) : false;
+}
+
 function get_userdata($userId)
 {
     return $userId > 0 && $userId < 900 ? (object) ['ID' => (int) $userId, 'display_name' => 'User ' . $userId] : false;
@@ -594,6 +683,9 @@ if (!class_exists('WP_REST_Request')) {
         private array $headers = [];
 
         private string $body = '';
+
+        /** @var array<string, array<string, mixed>> */
+        private array $fileParams = [];
 
         public function __construct(private string $method = 'POST', private string $route = '') {}
 
@@ -652,6 +744,16 @@ if (!class_exists('WP_REST_Request')) {
         public function get_url_params()
         {
             return $this->urlParams;
+        }
+
+        public function set_file_params($params): void
+        {
+            $this->fileParams = (array) $params;
+        }
+
+        public function get_file_params()
+        {
+            return $this->fileParams;
         }
 
         public function get_params()

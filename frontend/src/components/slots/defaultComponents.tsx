@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { useSlotsWith } from '../../core/context'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useI18nOptional, useSlotsWith } from '../../core/context'
 import type {
   BadgeProps, ButtonProps, CheckboxProps, CopyFieldProps, MenuProps, ModalProps, SelectProps, SlotComponents,
   SpinnerProps, SwitchProps, TabsProps, TextInputProps, TooltipProps,
@@ -22,6 +22,9 @@ function Button({ variant = 'secondary', size = 'md', loading, disabled, icon, t
       onClick={onClick}
       aria-label={aria['aria-label']}
       aria-pressed={aria['aria-pressed']}
+      aria-expanded={aria['aria-expanded']}
+      aria-haspopup={aria['aria-haspopup']}
+      aria-controls={aria['aria-controls']}
     >
       {loading ? <span className="aikit-spinner" aria-hidden="true" /> : icon}
       {children}
@@ -76,25 +79,35 @@ function Checkbox({ checked, onChange, disabled, label, id }: CheckboxProps) {
 }
 
 function Spinner({ size = 'sm', className }: SpinnerProps) {
-  return <span className={['aikit-spinner', size === 'md' ? 'aikit-spinner--md' : '', className || ''].join(' ').trim()} role="status" aria-label="Loading" />
+  const { __ } = useI18nOptional()
+  return <span className={['aikit-spinner', size === 'md' ? 'aikit-spinner--md' : '', className || ''].join(' ').trim()} role="status" aria-label={__('Loading')} />
 }
 
-/** A `<dialog>`: native focus trap and Escape handling, no portal needed. */
+/**
+ * A `<dialog>`: native focus trap, no portal needed. Escape asks the host to
+ * close it (once); closed, focus goes back to what opened it, since the dialog
+ * leaves the page before the browser could do that itself.
+ */
 function Modal({ open, onClose, title, footer, width = 480, children }: ModalProps) {
+  const { __ } = useI18nOptional()
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const dialog = ref.current
-    if (!dialog) return
-    if (open && !dialog.open) dialog.showModal?.()
-    if (!open && dialog.open) dialog.close()
+    if (!open || !dialog) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (!dialog.open) dialog.showModal?.()
+    return () => {
+      if (dialog.open) dialog.close()
+      if (opener?.isConnected) opener.focus()
+    }
   }, [open])
   if (!open) return null
   return (
-    <dialog ref={ref} className="aikit aikit-modal" style={{ width }} onClose={onClose} onCancel={onClose}>
+    <dialog ref={ref} className="aikit aikit-modal" style={{ width }} onCancel={(e) => { e.preventDefault(); onClose() }}>
       {title !== undefined && (
         <div className="aikit-modal__head">
           <span>{title}</span>
-          <Button variant="ghost" size="sm" icon={<Icon name="close" />} aria-label="Close" onClick={onClose} />
+          <Button variant="ghost" size="sm" icon={<Icon name="close" />} aria-label={__('Close')} onClick={onClose} />
         </div>
       )}
       <div className="aikit-modal__body">{children}</div>
@@ -124,6 +137,7 @@ function Badge({ tone = 'neutral', title, children }: BadgeProps) {
 }
 
 function CopyField({ value, label, masked, className }: CopyFieldProps) {
+  const { __ } = useI18nOptional()
   const [copied, setCopied] = useState(false)
   const copy = () => {
     navigator.clipboard?.writeText(value).then(() => {
@@ -134,7 +148,7 @@ function CopyField({ value, label, masked, className }: CopyFieldProps) {
   return (
     <span className={['aikit-copy', className || ''].join(' ').trim()}>
       <span className="aikit-copy__value" title={masked ? undefined : value} aria-label={label}>{masked ? '•'.repeat(Math.min(24, value.length)) : value}</span>
-      <Button variant="ghost" size="sm" icon={<Icon name={copied ? 'check' : 'copy'} />} aria-label={copied ? 'Copied' : 'Copy'} title={copied ? 'Copied' : 'Copy'} onClick={copy} />
+      <Button variant="ghost" size="sm" icon={<Icon name={copied ? 'check' : 'copy'} />} aria-label={copied ? __('Copied') : __('Copy')} title={copied ? __('Copied') : __('Copy')} onClick={copy} />
     </span>
   )
 }
@@ -148,10 +162,47 @@ function Tooltip({ title, children }: TooltipProps) {
   )
 }
 
+const MENU_GAP = 4
+const MENU_EDGE = 8
+
+/**
+ * Put an open menu under its trigger, right edges aligned, or above it when
+ * there is no room below. The list is `position: fixed`, so a scrolling parent
+ * (the chat history's list) cannot clip it; an ancestor with a transform (a
+ * sliding dock) moves where fixed starts, so that offset is measured first.
+ */
+function placeMenu(trigger: HTMLElement, list: HTMLElement) {
+  list.style.top = '0px'
+  list.style.left = '0px'
+  const origin = list.getBoundingClientRect()
+  const anchor = trigger.getBoundingClientRect()
+  const below = anchor.bottom + MENU_GAP
+  const above = anchor.top - MENU_GAP - origin.height
+  const top = below + origin.height > window.innerHeight - MENU_EDGE && above >= MENU_EDGE ? above : below
+  const left = Math.max(MENU_EDGE, Math.min(anchor.right - origin.width, window.innerWidth - MENU_EDGE - origin.width))
+  list.style.top = `${top - origin.top}px`
+  list.style.left = `${left - origin.left}px`
+  list.style.visibility = 'visible'
+}
+
 function Menu({ trigger, items, ...aria }: MenuProps) {
   const [open, setOpen] = useState(false)
   const id = useId()
   const wrap = useRef<HTMLSpanElement>(null)
+  const button = useRef<HTMLSpanElement>(null)
+  const list = useRef<HTMLUListElement>(null)
+  useLayoutEffect(() => {
+    if (!open) return
+    const place = () => { if (button.current && list.current) placeMenu(button.current, list.current) }
+    place()
+    // Fixed, the list would stay put while its trigger scrolls away: follow it.
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open])
   useEffect(() => {
     if (!open) return
     const away = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false) }
@@ -165,11 +216,11 @@ function Menu({ trigger, items, ...aria }: MenuProps) {
   }, [open])
   return (
     <span className="aikit-menu" ref={wrap}>
-      <span role="button" tabIndex={0} aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={() => setOpen(o => !o)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
+      <span ref={button} role="button" tabIndex={0} aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={() => setOpen(o => !o)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
         {trigger}
       </span>
       {open && (
-        <ul className="aikit-menu__list" role="menu" id={id} aria-label={aria['aria-label']}>
+        <ul ref={list} className="aikit-menu__list" role="menu" id={id} aria-label={aria['aria-label']}>
           {items.map(item => (
             <li key={item.key} role="none">
               <button type="button" role="menuitem" className={['aikit-menu__item', item.danger ? 'aikit-menu__item--danger' : ''].join(' ').trim()} disabled={item.disabled} onClick={() => { setOpen(false); item.onClick() }}>

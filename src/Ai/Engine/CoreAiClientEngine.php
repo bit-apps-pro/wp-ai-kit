@@ -12,7 +12,7 @@ use BitApps\AiKit\Ai\AiException;
  * turn; AgentLoop runs the tools. External SDK classes are named inline (never in
  * a `use` line) so prefixing tools leave them alone.
  */
-final class CoreAiClientEngine implements EngineInterface
+final class CoreAiClientEngine implements EngineInterface, SupportsAttachments
 {
     public const KEY = 'wordpress';
 
@@ -38,6 +38,17 @@ final class CoreAiClientEngine implements EngineInterface
     public function label(): string
     {
         return 'WordPress AI (Settings → Connectors)';
+    }
+
+    /** The site's provider decides; the request fails with its own message if it cannot read a file. */
+    public function attachmentKinds(): array
+    {
+        return ['image', 'pdf'];
+    }
+
+    public function maxAttachmentBytes(): int
+    {
+        return 0;
     }
 
     public function send(array $messages, array $tools, string $system, array $options): array
@@ -94,9 +105,13 @@ final class CoreAiClientEngine implements EngineInterface
             $role = (string) ($message['role'] ?? '');
 
             if ('user' === $role) {
+                $parts = isset($message['parts']) ? self::fileParts((array) $message['parts']) : [];
                 $text = (string) ($message['content'] ?? '');
-                if ('' !== trim($text)) {
-                    $out[] = ['role' => 'user', 'parts' => [['type' => 'text', 'text' => $text]]];
+                if ([] === $parts && '' !== trim($text)) {
+                    $parts = [['type' => 'text', 'text' => $text]];
+                }
+                if ([] !== $parts) {
+                    $out[] = ['role' => 'user', 'parts' => $parts];
                 }
 
                 continue;
@@ -136,6 +151,28 @@ final class CoreAiClientEngine implements EngineInterface
                 if ([] !== $parts) {
                     $out[] = ['role' => 'user', 'parts' => $parts];
                 }
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * A user message's parts (AttachmentEngine) as core message parts; files inline.
+     *
+     * @param array<int, array<string, mixed>> $parts
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function fileParts(array $parts): array
+    {
+        $out = [];
+        foreach ($parts as $part) {
+            $type = (string) ($part['type'] ?? '');
+            if ('text' === $type && '' !== trim((string) ($part['text'] ?? ''))) {
+                $out[] = ['type' => 'text', 'text' => (string) $part['text']];
+            } elseif ('image' === $type || 'pdf' === $type) {
+                $out[] = ['type' => 'file', 'file' => ['fileType' => 'inline', 'mimeType' => (string) $part['mime'], 'base64Data' => (string) $part['data']]];
             }
         }
 

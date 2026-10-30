@@ -42,6 +42,27 @@ describe('ConversationHistory', () => {
     expect(screen.getByText(/Pricing page/)).toBeInTheDocument()
   })
 
+  it('shows the last list at once when the popover opens again and refreshes it behind', async () => {
+    const mock = createMockTransport({ latency: 30 })
+    mock.seed({ id: 'old', title: 'Old chat', updated: now - 3 * 86400 })
+    const view = (open: boolean) => (
+      <AiKitProvider bootstrap={sampleBootstrap()} transport={mock.transport}>
+        <ConversationHistory anchor="popover" open={open} onClose={() => undefined} />
+      </AiKitProvider>
+    )
+    const { rerender, container } = render(view(true))
+    await screen.findByText('Old chat')
+
+    rerender(view(false))
+    mock.seed({ id: 'new', title: 'Newer chat', updated: now - 60 })
+    rerender(view(true))
+
+    expect(screen.getByText('Old chat')).toBeInTheDocument()
+    expect(container.querySelector('.aikit-history__loading')).toBeNull()
+    expect(await screen.findByText('Newer chat')).toBeInTheDocument()
+    expect(mock.calls.filter(call => call.action === 'assistant/history' && !call.payload.archived)).toHaveLength(2)
+  })
+
   it('renames a chat from its menu', async () => {
     const user = userEvent.setup()
     const mock = setup()
@@ -66,23 +87,32 @@ describe('ConversationHistory', () => {
     expect(mock.conversations.get('old')?.title).toBe('Old chat')
   })
 
-  it('archiving moves a chat to the Archived section', async () => {
+  it('archiving moves a chat to the Archived section, which shows only while it has chats', async () => {
     const user = userEvent.setup()
     setup()
     await liveList()
-    await user.click(screen.getByRole('button', { name: 'Archived' }))
-    expect(await screen.findByText('No archived chats.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Archived/ })).not.toBeInTheDocument()
 
     await openMenu(user, 'Old chat')
     await user.click(screen.getByRole('menuitem', { name: 'Archive' }))
-    expect(await screen.findByRole('button', { name: 'Archived (1)' })).toBeInTheDocument()
+    const toggle = await screen.findByRole('button', { name: 'Archived (1)' })
+    // One scroll: Archived sits in it after the live chats, its heading stuck to the bottom while closed.
+    const head = toggle.closest('.aikit-history__archived') as HTMLElement
+    expect(head.parentElement).toHaveClass('aikit-history__body')
+    expect(head).not.toHaveClass('aikit-history__archived--open')
+    await user.click(toggle)
+    expect(head).toHaveClass('aikit-history__archived--open')
     const [live, archived] = screen.getAllByRole('list')
     await waitFor(() => expect(titles(live)).toEqual(['Pinned chat', 'New chat about pricing']))
-    expect(titles(archived)).toEqual(['Old chat'])
+    await waitFor(() => expect(titles(archived)).toEqual(['Old chat']))
+    expect(live.parentElement).toBe(head.parentElement)
+    expect(archived.parentElement).toBe(head.parentElement)
+    expect(head.parentElement?.nextElementSibling).toHaveClass('aikit-history__footer')
 
     await openMenu(user, 'Old chat')
     await user.click(screen.getByRole('menuitem', { name: 'Unarchive' }))
     await waitFor(() => expect(titles(screen.getAllByRole('list')[0])).toContain('Old chat'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Archived/ })).not.toBeInTheDocument())
   })
 
   it('pins a chat to the top', async () => {

@@ -47,6 +47,24 @@ final class Contract
         return 'bitapps_ai_chat_view_' . self::token($slug);
     }
 
+    /**
+     * Filter: `(array $limits)` → attachment limits (AttachmentStore::DEFAULT_LIMITS:
+     * max_files, max_total_bytes, max_bytes per kind, max_text_chars, ttl, uploads_per_window, window).
+     */
+    public static function attachmentLimitsHook(string $slug): string
+    {
+        return 'bitapps_ai_attachment_limits_' . self::token($slug);
+    }
+
+    /**
+     * Filter: `(bool $strip, string $extension)` → whether an attached JPEG, PNG or
+     * WebP loses its EXIF/XMP/IPTC metadata (GPS position, camera) when stored. Default true.
+     */
+    public static function stripImageMetadataHook(string $slug): string
+    {
+        return 'bitapps_ai_attachment_strip_metadata_' . self::token($slug);
+    }
+
     /** Filter: `(array $bootstrap)` → what Kit::uiBootstrap() hands the admin UI. */
     public static function uiBootstrapHook(string $slug): string
     {

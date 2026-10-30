@@ -2,6 +2,7 @@ import {
   type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState,
 } from 'react'
 import { useI18n } from '../../core/context'
+import type { DraftAttachment } from '../../core/store'
 import type { Mention } from '../../core/types'
 import { useSlots } from '../slots/useSlots'
 
@@ -37,6 +38,17 @@ export interface CommandsProvider {
   heading?: string
 }
 
+/** Files for the next message: the composer shows them and takes new ones. */
+export interface ComposerAttachments {
+  items: DraftAttachment[]
+  /** The file picker's `accept` (`bootstrap.attachments.accept`). */
+  accept: string
+  onAdd: (files: File[]) => void
+  onRemove: (localId: string) => void
+  /** Under the files, e.g. where they go and for how long. */
+  note?: ReactNode
+}
+
 export interface PromptComposerProps {
   value?: string
   defaultValue?: string
@@ -56,6 +68,8 @@ export interface PromptComposerProps {
   /** localStorage key for the remembered height. */
   storageKey?: string
   autoFocus?: boolean
+  /** Attach files: a paperclip button, drag and drop, and pasted images. */
+  attachments?: ComposerAttachments
 }
 
 type MenuState = { kind: '@' | '/', query: string, start: number }
@@ -112,9 +126,9 @@ function resolveCommands(provider: CommandsProvider | undefined, query: string):
 export default function PromptComposer({
   value, defaultValue = '', onChange, onSubmit, busy = false, disabled = false, placeholder,
   minHeight = 44, maxHeight = 360, resizable = true, mentions, commands, hint,
-  storageKey = 'aikit-composer-height', autoFocus,
+  storageKey = 'aikit-composer-height', autoFocus, attachments,
 }: PromptComposerProps) {
-  const { __ } = useI18n()
+  const { __, sprintf } = useI18n()
   const { Button, Icon } = useSlots()
   const input = useRef<HTMLTextAreaElement>(null)
   const [inner, setInner] = useState(defaultValue)
@@ -197,7 +211,15 @@ export default function PromptComposer({
     place(prompt + text.slice(caret), prompt.length)
   }
 
-  const canSend = !busy && !disabled && !!text.trim()
+  const files = attachments?.items || []
+  const uploading = files.some(file => file.status === 'uploading')
+  const readyFiles = files.filter(file => file.status === 'ready').length
+  const canSend = !busy && !disabled && !uploading && (!!text.trim() || readyFiles > 0)
+  const picker = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const addFiles = (list: FileList | null) => {
+    if (attachments && list && list.length) attachments.onAdd(Array.from(list))
+  }
 
   const send = () => {
     if (!canSend) return
@@ -208,6 +230,8 @@ export default function PromptComposer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter while an input method (Japanese, Chinese, Korean…) is composing picks the word, it does not send.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (menu && rows.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
@@ -273,6 +297,7 @@ export default function PromptComposer({
           {rows.map((row, i) => (
             <li
               key={row.id}
+              id={`${menuId}-${i}`}
               role="option"
               aria-selected={i === active}
               className={['aikit-composer__menu-row', i === active ? 'aikit-composer__menu-row--active' : ''].join(' ').trim()}
@@ -288,7 +313,33 @@ export default function PromptComposer({
         </ul>
       )}
 
-      <div className={['aikit-composer__box', disabled ? 'aikit-composer__box--disabled' : ''].join(' ').trim()}>
+      <div
+        className={['aikit-composer__box', disabled ? 'aikit-composer__box--disabled' : '', dragging ? 'aikit-composer__box--drop' : ''].join(' ').trim()}
+        onDragOver={attachments && !disabled ? (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDragging(true) } } : undefined}
+        onDragLeave={attachments ? () => setDragging(false) : undefined}
+        onDrop={attachments && !disabled ? (e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) } : undefined}
+      >
+        {files.length > 0 && (
+          <ul className="aikit-composer__files" aria-label={__('Attached files')}>
+            {files.map(file => (
+              <li key={file.localId} className={['aikit-composer__file', `aikit-composer__file--${file.status}`].join(' ')} title={file.error || file.name}>
+                {file.previewUrl
+                  ? <img className="aikit-composer__file-thumb" src={file.previewUrl} alt="" />
+                  : <span className="aikit-composer__file-kind" aria-hidden="true">{(file.kind || 'file').toUpperCase().slice(0, 4)}</span>}
+                <span className="aikit-composer__file-text">
+                  <span className="aikit-composer__file-name">{file.name}</span>
+                  <span className="aikit-composer__file-meta">
+                    {file.status === 'error' ? file.error : file.status === 'uploading' ? __('Uploading…') : readableSize(file.size)}
+                  </span>
+                </span>
+                {file.status === 'uploading' && <span className="aikit-composer__file-progress" style={{ width: `${Math.round(file.progress * 100)}%` }} />}
+                <button type="button" className="aikit-composer__file-remove" aria-label={sprintf(__('Remove %s'), file.name)} onClick={() => attachments?.onRemove(file.localId)}>
+                  <Icon name="close" size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {resizable && (
           <div
             className="aikit-composer__grip"
@@ -313,6 +364,8 @@ export default function PromptComposer({
           aria-autocomplete="list"
           aria-controls={menu ? menuId : undefined}
           aria-expanded={!!menu}
+          // Screen readers announce the highlighted row while the caret stays in the message.
+          aria-activedescendant={menu && rows.length ? `${menuId}-${active}` : undefined}
           disabled={disabled}
           autoFocus={autoFocus}
           onChange={(e) => {
@@ -323,8 +376,36 @@ export default function PromptComposer({
           onKeyUp={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') watchCaret(text) }}
           onBlur={() => setMenu(null)}
           onKeyDown={onKeyDown}
+          onPaste={attachments ? (e) => {
+            if (e.clipboardData?.files?.length) {
+              e.preventDefault()
+              addFiles(e.clipboardData.files)
+            }
+          } : undefined}
         />
         <div className="aikit-composer__bar">
+          {attachments && (
+            <>
+              <input
+                ref={picker}
+                type="file"
+                multiple
+                hidden
+                accept={attachments.accept}
+                onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="aikit-composer__attach"
+                icon={<Icon name="attach" />}
+                disabled={disabled}
+                aria-label={__('Attach files')}
+                title={__('Attach files')}
+                onClick={() => picker.current?.click()}
+              />
+            </>
+          )}
           <span className="aikit-composer__hint">{hintNode}</span>
           <Button
             variant="primary"
@@ -339,6 +420,12 @@ export default function PromptComposer({
           />
         </div>
       </div>
+      {files.length > 0 && attachments?.note && <div className="aikit-composer__files-note">{attachments.note}</div>}
     </div>
   )
+}
+
+function readableSize(bytes: number): string {
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }

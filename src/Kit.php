@@ -4,9 +4,13 @@ namespace BitApps\AiKit;
 
 use BitApps\AiKit\Abilities\AbilitiesBridge;
 use BitApps\AiKit\Ai\Assistant;
+use BitApps\AiKit\Ai\AssistantPrivacy;
+use BitApps\AiKit\Ai\Attachments\AttachmentStore;
 use BitApps\AiKit\Ai\ConversationRepositoryInterface;
 use BitApps\AiKit\Ai\ConversationStore;
 use BitApps\AiKit\Ai\Engine\CoreAiClientEngine;
+use BitApps\AiKit\Ai\Engine\EngineInterface;
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\UserMetaConversationRepository;
 use BitApps\AiKit\Audit\AuditLoggerInterface;
 use BitApps\AiKit\Audit\NullAuditLogger;
@@ -53,6 +57,13 @@ use BitApps\AiKit\Tools\ToolRunner;
  */
 final class Kit
 {
+    /**
+     * Options the kit stores, by key under the plugin's prefix; removeSiteData()
+     * deletes them. A new option is added here too (KitTest checks every name the
+     * kit uses). The tables' version stamp goes with the tables.
+     */
+    public const OWNED_OPTIONS = ['mcp_settings', 'ai_settings', 'ai_credentials', 'mcp_api_keys', 'mcp_oauth_clients', 'mcp_oauth_grants', 'ai_audit_log'];
+
     /** Expiry choices a settings screen offers, in days; null = never. */
     public const API_KEY_EXPIRY_DAYS = [7, 30, 90, 365, null];
 
@@ -74,6 +85,8 @@ final class Kit
     private ?OAuthServer $oauth = null;
 
     private ?Tables $tables = null;
+
+    private ?AttachmentStore $attachmentStore = null;
 
     /** @var BearerResolverInterface[] resolvers added by features such as OAuth */
     private array $extraResolvers = [];
@@ -230,7 +243,49 @@ final class Kit
     {
         if (\function_exists('wp_clear_scheduled_hook')) {
             wp_clear_scheduled_hook($this->purgeHook());
+            wp_clear_scheduled_hook($this->attachmentsPurgeHook());
         }
+    }
+
+    /**
+     * Remove everything the kit keeps on this site: settings, keys, tokens, chats,
+     * attached files, scheduled work and its tables. For the plugin's uninstall;
+     * removeSiteData() does the same without a booted kit.
+     */
+    public function uninstall(bool $dropTables = true): void
+    {
+        self::removeSiteData($this->context, $dropTables);
+    }
+
+    /**
+     * Everything the kit keeps on the current site, removed: its options (settings,
+     * provider keys, API keys, OAuth clients and grants, the option-stored activity
+     * log), each user's chats and open-chat pointer in user meta, attached files,
+     * scheduled work and, with $dropTables, its tables (chat history and activity
+     * log) with their version stamp. Short-lived transients (rate limits, one-time
+     * codes, reply locks) are left to expire.
+     *
+     * Static so a plugin's uninstall can call it without booting the kit: it reads
+     * only the context's prefix and storage. On a network, call it for each site.
+     * A plugin that lets users keep their data passes its own setting as $dropTables.
+     */
+    public static function removeSiteData(PluginContext $context, bool $dropTables = true): void
+    {
+        if (\function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook($context->optionName('aikit_purge'));
+            wp_clear_scheduled_hook($context->optionName('aikit_attachments_purge'));
+        }
+        if ($dropTables) {
+            (new Tables($context))->uninstall();
+        }
+        (new AttachmentStore($context))->removeAll();
+
+        foreach (self::OWNED_OPTIONS as $option) {
+            delete_option($context->optionName($option));
+        }
+        $metaKey = self::conversationMetaKey($context);
+        delete_metadata('user', 0, $metaKey, '', true);
+        delete_metadata('user', 0, $metaKey . '_active', '', true);
     }
 
     /** init: keep the tables current and the daily purge scheduled (storage `tables` only). */
@@ -570,6 +625,61 @@ final class Kit
         }
     }
 
+    /**
+     * delete_user: the account's assistant chats and attached files.
+     *
+     * @param mixed $userId
+     */
+    public function onUserDeleting($userId = 0): void
+    {
+        $this->privacy()->forget((int) $userId);
+    }
+
+    /**
+     * wp_privacy_personal_data_exporters: the assistant's chats in Tools → Export Personal Data.
+     *
+     * @param mixed $exporters
+     *
+     * @return mixed
+     */
+    public function onPrivacyExporters($exporters)
+    {
+        if (!\is_array($exporters)) {
+            return $exporters;
+        }
+        $exporters[$this->context->slug() . '-ai-chats'] = [
+            'exporter_friendly_name' => sprintf('%s AI assistant chats', $this->context->name()),
+            'callback'               => fn ($email, $page = 1) => $this->privacy()->export((string) $email, (int) $page),
+        ];
+
+        return $exporters;
+    }
+
+    /**
+     * wp_privacy_personal_data_erasers: the assistant's chats and files in Tools → Erase Personal Data.
+     *
+     * @param mixed $erasers
+     *
+     * @return mixed
+     */
+    public function onPrivacyErasers($erasers)
+    {
+        if (!\is_array($erasers)) {
+            return $erasers;
+        }
+        $erasers[$this->context->slug() . '-ai-chats'] = [
+            'eraser_friendly_name' => sprintf('%s AI assistant chats', $this->context->name()),
+            'callback'             => fn ($email) => $this->privacy()->erase((string) $email),
+        ];
+
+        return $erasers;
+    }
+
+    public function privacy(): AssistantPrivacy
+    {
+        return new AssistantPrivacy($this->context, $this->conversations(), $this->attachments());
+    }
+
     /** The plugin's MCP settings store (shared shape across Bit plugins). */
     public function mcpSettings(): McpSettings
     {
@@ -630,7 +740,7 @@ final class Kit
             'endpoint'     => rest_url($this->context->restNamespace() . HttpTransport::ROUTE),
             'tools'        => $tools,
             'requirements' => RequirementsReport::checks(),
-            'recent'       => $this->auditLogger()->recent(20),
+            'recent'       => $this->recentOutsideCalls(20),
             'api_keys'     => [
                 'enabled'    => $this->features->isEnabled(FeatureFlags::API_KEYS),
                 'forced_off' => $this->features->isForcedOff(FeatureFlags::API_KEYS),
@@ -710,8 +820,39 @@ final class Kit
             $this->registry(),
             $this->conversations(),
             new RateLimiter($this->context->optionPrefix()),
-            $engineFactory ?? $this->engineFactory
+            $engineFactory ?? $this->engineFactory,
+            $this->attachments()
         );
+    }
+
+    /** Files attached to assistant messages; null unless the plugin ships the assistant with attachments. */
+    public function attachments(): ?AttachmentStore
+    {
+        if (!$this->context->provides(PluginContext::FEATURE_ASSISTANT) || !$this->context->provides(PluginContext::FEATURE_ATTACHMENTS)) {
+            return null;
+        }
+
+        return $this->attachmentStore ??= new AttachmentStore($this->context);
+    }
+
+    /** init: keep the hourly removal of expired attachments scheduled. */
+    public function onAttachmentsInit(): void
+    {
+        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->attachmentsPurgeHook())) {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', $this->attachmentsPurgeHook());
+        }
+    }
+
+    /** The hourly purge of attachments older than their time to live. */
+    public function onPurgeAttachments(): void
+    {
+        $this->attachments()?->purgeExpired();
+    }
+
+    /** `{option_prefix}aikit_attachments_purge`: the cron hook of the attachment purge. */
+    public function attachmentsPurgeHook(): string
+    {
+        return $this->context->optionName('aikit_attachments_purge');
     }
 
     /**
@@ -742,11 +883,15 @@ final class Kit
 
         $engine = null;
         $reason = null;
+        $engineObject = null;
         if ($assistantOn && $canUse) {
             $resolved = $this->assistant()->resolveEngine();
-            $engine = null !== $resolved['engine'] ? ['key' => $resolved['engine']->key(), 'label' => $resolved['engine']->label()] : null;
+            $engineObject = $resolved['engine'];
+            $engine = null !== $engineObject ? ['key' => $engineObject->key(), 'label' => $engineObject->label()] : null;
             $reason = $resolved['reason'];
         }
+        $attachments = $this->attachments();
+        $canUpload = $canUse && \function_exists('current_user_can') && current_user_can('upload_files');
 
         $brand = $this->context->service('brand');
         $icons = $this->context->icons();
@@ -763,7 +908,7 @@ final class Kit
             'nonce'     => wp_create_nonce('wp_rest'),
             'canUse'    => $canUse,
             'canManage' => $canUse && $this->context->canManage($userId),
-            'canUpload' => $canUse && \function_exists('current_user_can') && current_user_can('upload_files'),
+            'canUpload' => $canUpload,
             'features'  => [
                 'assistant'   => $assistantShipped,
                 'mcp'         => $this->context->provides(PluginContext::FEATURE_MCP) && !$this->features->isForcedOff(FeatureFlags::MCP_SERVER),
@@ -774,13 +919,14 @@ final class Kit
                 'apiKeys'     => $this->context->provides(PluginContext::FEATURE_API_KEYS),
                 'abilities'   => $this->context->provides(PluginContext::FEATURE_ABILITIES),
                 'mcpAdapter'  => $this->context->provides(PluginContext::FEATURE_MCP_ADAPTER),
-                'attachments' => false,
-                'stream'      => false,
+                'attachments' => null !== $attachments,
+                'stream'      => $this->context->provides(PluginContext::FEATURE_STREAM),
             ],
             'assistantOn'  => $assistantOn,
             'mcpOn'        => $this->context->provides(PluginContext::FEATURE_MCP) && $this->features->isEnabled(FeatureFlags::MCP_SERVER),
             'engine'       => $engine,
             'engineReason' => $reason,
+            'attachments'  => null !== $attachments && $canUpload ? self::attachmentRules($attachments, $engineObject) : null,
             'user'         => ['id' => $userId, 'locale' => \function_exists('get_user_locale') ? (string) get_user_locale() : 'en_US'],
             'settingsUrl'  => $this->context->url('settings'),
             'docsUrl'      => $this->context->url('docs'),
@@ -893,6 +1039,57 @@ final class Kit
         (new WpMcpAdapterBridge($this->context, $this->abilities()))->createServer($adapter);
     }
 
+    /**
+     * The last calls from outside the assistant (MCP, Abilities API, WP-CLI) for
+     * the MCP screen's summary; the assistant shows its own on its settings page.
+     * Read from a wider window so a busy assistant does not empty the list.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function recentOutsideCalls(int $limit): array
+    {
+        $rows = array_filter(
+            $this->auditLogger()->recent($limit * 10),
+            static fn ($row) => ToolContext::CHANNEL_ASSISTANT !== ($row['channel'] ?? '')
+        );
+
+        return \array_slice(array_values($rows), 0, $limit);
+    }
+
+    /**
+     * What the composer checks before uploading: the file types, how many and how
+     * large, and which kinds the current engine reads (text always).
+     *
+     * @return array<string, mixed>
+     */
+    private static function attachmentRules(AttachmentStore $store, ?EngineInterface $engine): array
+    {
+        $limits = $store->limits();
+        $kinds = [AttachmentStore::KIND_TEXT, AttachmentStore::KIND_DOCX];
+        $maxTotal = (int) $limits['max_total_bytes'];
+        if ($engine instanceof SupportsAttachments) {
+            $kinds = array_merge($kinds, $engine->attachmentKinds());
+            if ($engine->maxAttachmentBytes() > 0) {
+                $maxTotal = min($maxTotal, $engine->maxAttachmentBytes());
+            }
+        }
+        $accept = [];
+        foreach (AttachmentStore::TYPES as $ext => $type) {
+            if (\in_array($type['kind'], $kinds, true)) {
+                $accept[] = '.' . $ext;
+            }
+        }
+
+        return [
+            'accept'        => implode(',', $accept),
+            'kinds'         => array_values(array_unique($kinds)),
+            'maxFiles'      => (int) $limits['max_files'],
+            'maxTotalBytes' => $maxTotal,
+            'maxBytes'      => (array) $limits['max_bytes'],
+            'ttlHours'      => (int) round((int) $limits['ttl'] / HOUR_IN_SECONDS),
+        ];
+    }
+
     private function piiMasker(): ?PiiMasker
     {
         $classifier = $this->context->service('pii_classifier');
@@ -916,12 +1113,22 @@ final class Kit
      */
     private function registerHooks(): void
     {
+        if (null !== $this->attachments()) {
+            add_action('init', [$this, 'onAttachmentsInit'], 1, 0);
+            add_action($this->attachmentsPurgeHook(), [$this, 'onPurgeAttachments'], 10, 0);
+        }
         if ([] !== $this->tables()->wanted()) {
             add_action('init', [$this, 'onStorageInit'], 1, 0);
             add_action($this->purgeHook(), [$this, 'onPurge'], 10, 0);
         }
         if ($this->context->provides(PluginContext::FEATURE_REST_UI) || $this->context->provides(PluginContext::FEATURE_MCP)) {
             add_action('rest_api_init', [$this, 'onRestApiInit'], 20, 0);
+        }
+        if ($this->context->provides(PluginContext::FEATURE_ASSISTANT)) {
+            // Before WordPress removes the account: its chats and files go with it.
+            add_action('delete_user', [$this, 'onUserDeleting'], 10, 1);
+            add_filter('wp_privacy_personal_data_exporters', [$this, 'onPrivacyExporters'], 10, 1);
+            add_filter('wp_privacy_personal_data_erasers', [$this, 'onPrivacyErasers'], 10, 1);
         }
         if (!$this->context->provides(PluginContext::FEATURE_MCP)) {
             return;

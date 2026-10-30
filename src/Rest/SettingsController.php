@@ -3,6 +3,7 @@
 namespace BitApps\AiKit\Rest;
 
 use BitApps\AiKit\Kit;
+use BitApps\AiKit\Settings\AiSettings;
 
 /**
  * `/ai/settings/*`: the assistant and MCP settings screens read their state
@@ -17,13 +18,27 @@ final class SettingsController
     /** @param \WP_REST_Request $request */
     public function assistant($request)
     {
-        return Response::ok($this->kit->assistantState());
+        $state = $this->kit->assistantState();
+        if (!$this->kit->context()->canManage((int) get_current_user_id())) {
+            // Only who may change them sees the keys' last characters and the gateway the assistant calls.
+            $state['keys'] = array_map(static fn ($key) => ['set' => \is_array($key) && !empty($key['set']), 'hint' => ''], (array) ($state['keys'] ?? []));
+            $state['settings']['base_url'] = '';
+        }
+
+        return Response::ok($state);
     }
 
     /** @param \WP_REST_Request $request */
     public function saveAssistant($request)
     {
-        $this->kit->saveAiSettings(self::settings($request));
+        $settings = self::settings($request);
+        if (\array_key_exists('base_url', $settings)) {
+            $problem = AiSettings::baseUrlError($settings['base_url']);
+            if (null !== $problem) {
+                return Response::error('invalid_base_url', $problem, 422);
+            }
+        }
+        $this->kit->saveAiSettings($settings);
 
         return Response::ok($this->kit->assistantState());
     }

@@ -86,16 +86,39 @@ final class ConversationStore
      */
     public function save(int $userId, array $messages, ?array $pending, array $context = []): void
     {
+        $this->saveTo($userId, $this->load($userId)['id'], $messages, $pending, $context);
+    }
+
+    /**
+     * Store a turn in the conversation it started in. The user may have opened
+     * another one, or started a new chat, while it ran: that one stays open and
+     * untouched. A conversation deleted meanwhile is not brought back.
+     *
+     * @param null|string                      $id       the conversation the turn loaded (load()['id']); null: a new one
+     * @param array<int, array<string, mixed>> $messages
+     * @param null|array<string, mixed>        $pending
+     * @param array<string, mixed>             $context
+     */
+    public function saveTo(int $userId, ?string $id, array $messages, ?array $pending, array $context = []): void
+    {
         if ($userId <= 0) {
             return;
         }
 
-        $current = $this->load($userId);
-        $title = '' !== $current['title'] ? $current['title'] : self::titleOf($messages);
+        $current = null === $id ? null : $this->repository->find($userId, $id);
+        if (null !== $id && null === $current) {
+            return;
+        }
+        $wasOpen = $this->activeId($userId) === $id;
+        // Read now, not when the turn began: a rename or a pin made meanwhile stays.
+        $title = null !== $current && '' !== $current['title'] ? $current['title'] : self::titleOf($messages);
+        $kept = null !== $current ? $current['context'] : [];
         // A turn's context (the record it is about) must not drop the flags the user set.
-        $context = [] !== $context ? array_merge(array_intersect_key($current['context'], array_flip(self::FLAGS)), $context) : $current['context'];
-        $id = $this->repository->save($userId, $current['id'], $title, self::trimmed($messages), $pending, $context);
-        update_user_meta($userId, $this->activeKey, $id);
+        $context = [] !== $context ? array_merge(array_intersect_key($kept, array_flip(self::FLAGS)), $context) : $kept;
+        $saved = $this->repository->save($userId, $id, $title, self::trimmed($messages), $pending, $context);
+        if ($wasOpen) {
+            update_user_meta($userId, $this->activeKey, $saved);
+        }
     }
 
     /** Give a conversation a title of the user's choosing; false when it is not theirs. */

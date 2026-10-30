@@ -51,6 +51,47 @@ final class KitTest extends TestCase
         self::assertSame(['bit_demo_mcp_settings', 'bit_demo_ai_settings'], $flags->optionNames());
     }
 
+    public function testRemoveSiteDataTakesEverythingTheKitKeeps(): void
+    {
+        $context = $this->context(['features' => [PluginContext::FEATURE_ATTACHMENTS => true]]);
+        foreach (Kit::OWNED_OPTIONS as $option) {
+            update_option('bit_demo_' . $option, ['x' => 1]);
+        }
+        update_option('bit_demo_unrelated', 'stays');
+        update_user_meta(5, 'bit_demo_ai_conversation', ['messages' => []]);
+        update_user_meta(6, 'bit_demo_ai_conversation_active', 'abc');
+        update_user_meta(6, 'other_plugin_meta', 'stays');
+
+        Kit::removeSiteData($context, false);
+
+        foreach (Kit::OWNED_OPTIONS as $option) {
+            self::assertFalse(get_option('bit_demo_' . $option), $option);
+        }
+        self::assertSame('stays', get_option('bit_demo_unrelated'));
+        self::assertSame('', get_user_meta(5, 'bit_demo_ai_conversation', true));
+        self::assertSame('', get_user_meta(6, 'bit_demo_ai_conversation_active', true));
+        self::assertSame('stays', get_user_meta(6, 'other_plugin_meta', true));
+    }
+
+    /** Every option name the kit builds is in OWNED_OPTIONS, or is not an option. */
+    public function testEveryOptionTheKitStoresIsRemovedOnUninstall(): void
+    {
+        // Names passed to optionName() that are not options: transient and hook prefixes,
+        // the user meta key, the tables' stamp (removed with the tables), the bare prefix.
+        $notOptions = ['', 'ai_confirm_', 'ai_turn_', 'aikit_purge', 'aikit_attachments_purge', 'ai_conversation', 'aikit_db_version'];
+        $used = [];
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(\dirname(__DIR__) . '/src'));
+        foreach ($files as $file) {
+            if ($file->isFile() && 'php' === $file->getExtension()) {
+                preg_match_all("/optionName\\('([a-z_]*)'/", (string) file_get_contents($file->getPathname()), $matches);
+                $used = array_merge($used, $matches[1]);
+            }
+        }
+
+        self::assertNotEmpty($used);
+        self::assertSame([], array_values(array_diff(array_unique($used), Kit::OWNED_OPTIONS, $notOptions)), 'add the new option to Kit::OWNED_OPTIONS');
+    }
+
     public function testMalformedSettingsReadAsDefaults(): void
     {
         update_option('bit_demo_ai_settings', 'yes');

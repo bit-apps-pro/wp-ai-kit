@@ -2,10 +2,14 @@
 
 namespace BitApps\AiKit\Ai\Providers;
 
+use BitApps\AiKit\Ai\AiException;
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
+use BitApps\AiKit\Ai\Engine\SupportsStreaming;
+
 /**
  * Anthropic Messages API.
  */
-final class ClaudeProvider extends AbstractProvider
+final class ClaudeProvider extends AbstractProvider implements SupportsAttachments, SupportsStreaming
 {
     public const KEY = 'claude';
 
@@ -23,7 +27,106 @@ final class ClaudeProvider extends AbstractProvider
         return 'Anthropic Claude';
     }
 
+    public function attachmentKinds(): array
+    {
+        return ['image', 'pdf'];
+    }
+
+    public function maxAttachmentBytes(): int
+    {
+        return 0;
+    }
+
     public function send(array $messages, array $tools, string $system, array $options): array
+    {
+        return $this->normalize($this->post(self::ENDPOINT, $this->headers(), $this->payload($messages, $tools, $system, $options)));
+    }
+
+    public function canStream(): bool
+    {
+        return true;
+    }
+
+    public function stream(array $messages, array $tools, string $system, array $options, callable $onText): array
+    {
+        $blocks = [];
+        $json = [];
+        $response = ['stop_reason' => 'end_turn', 'usage' => []];
+
+        $this->postStream(self::ENDPOINT, $this->headers(), $this->payload($messages, $tools, $system, $options) + ['stream' => true], static function (string $line) use (&$blocks, &$json, &$response, $onText): void {
+            $event = self::eventData($line);
+            if (null === $event) {
+                return;
+            }
+            $index = (int) ($event['index'] ?? 0);
+
+            switch ($event['type'] ?? '') {
+                case 'message_start':
+                    $response['usage'] = (array) ($event['message']['usage'] ?? []);
+
+                    break;
+
+                case 'content_block_start':
+                    $blocks[$index] = (array) ($event['content_block'] ?? []);
+                    $json[$index] = '';
+
+                    break;
+
+                case 'content_block_delta':
+                    $delta = (array) ($event['delta'] ?? []);
+                    $type = (string) ($delta['type'] ?? '');
+                    if ('text_delta' === $type) {
+                        $blocks[$index]['text'] = ($blocks[$index]['text'] ?? '') . (string) $delta['text'];
+                        $onText((string) $delta['text']);
+                    } elseif ('input_json_delta' === $type) {
+                        $json[$index] = ($json[$index] ?? '') . (string) ($delta['partial_json'] ?? '');
+                    } elseif ('thinking_delta' === $type) {
+                        $blocks[$index]['thinking'] = ($blocks[$index]['thinking'] ?? '') . (string) ($delta['thinking'] ?? '');
+                    } elseif ('signature_delta' === $type) {
+                        $blocks[$index]['signature'] = ($blocks[$index]['signature'] ?? '') . (string) ($delta['signature'] ?? '');
+                    }
+
+                    break;
+
+                case 'content_block_stop':
+                    // A tool's input arrives as JSON in pieces; the finished block holds it decoded, as send() returns it.
+                    if ('tool_use' === ($blocks[$index]['type'] ?? '')) {
+                        $input = json_decode('' !== ($json[$index] ?? '') ? $json[$index] : '{}', true);
+                        $blocks[$index]['input'] = \is_array($input) ? $input : [];
+                    }
+
+                    break;
+
+                case 'message_delta':
+                    $response['stop_reason'] = (string) ($event['delta']['stop_reason'] ?? $response['stop_reason']);
+                    $response['usage']['output_tokens'] = (int) ($event['usage']['output_tokens'] ?? 0);
+
+                    break;
+
+                case 'error':
+                    throw new AiException((string) ($event['error']['message'] ?? 'The AI provider stopped the reply.'), (string) ($event['error']['type'] ?? 'api_error'));
+            }
+        });
+
+        ksort($blocks);
+
+        return $this->normalize($response + ['content' => array_values($blocks)]);
+    }
+
+    /** @return array<string, string> */
+    private function headers(): array
+    {
+        return ['x-api-key' => $this->apiKey, 'anthropic-version' => self::API_VERSION];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $messages
+     * @param array<int, array<string, mixed>> $tools
+     * @param array<string, mixed>             $options
+     *
+     * @return array<string, mixed>
+     */
+    private function payload(array $messages, array $tools, string $system, array $options): array
     {
         $payload = [
             'model'      => (string) $options['model'],
@@ -40,7 +143,7 @@ final class ClaudeProvider extends AbstractProvider
             ], $tools);
         }
 
-        return $this->normalize($this->post(self::ENDPOINT, ['x-api-key' => $this->apiKey, 'anthropic-version' => self::API_VERSION], $payload));
+        return $payload;
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -50,7 +153,7 @@ final class ClaudeProvider extends AbstractProvider
         foreach ($messages as $message) {
             $role = (string) ($message['role'] ?? '');
             if ('user' === $role) {
-                $out[] = ['role' => 'user', 'content' => (string) ($message['content'] ?? '')];
+                $out[] = ['role' => 'user', 'content' => isset($message['parts']) ? self::blocks((array) $message['parts']) : (string) ($message['content'] ?? '')];
             } elseif ('assistant' === $role) {
                 $raw = $message['raw'] ?? null;
                 $own = self::KEY === ($message['engine'] ?? null) && \is_array($raw) && [] !== $raw;
@@ -83,6 +186,30 @@ final class ClaudeProvider extends AbstractProvider
         }
 
         return $out;
+    }
+
+    /**
+     * A user message's parts (AttachmentEngine) as content blocks.
+     *
+     * @param array<int, array<string, mixed>> $parts
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function blocks(array $parts): array
+    {
+        $blocks = [];
+        foreach ($parts as $part) {
+            $type = (string) ($part['type'] ?? '');
+            if ('text' === $type && '' !== (string) ($part['text'] ?? '')) {
+                $blocks[] = ['type' => 'text', 'text' => (string) $part['text']];
+            } elseif ('image' === $type) {
+                $blocks[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => (string) $part['mime'], 'data' => (string) $part['data']]];
+            } elseif ('pdf' === $type) {
+                $blocks[] = ['type' => 'document', 'source' => ['type' => 'base64', 'media_type' => 'application/pdf', 'data' => (string) $part['data']], 'title' => (string) ($part['name'] ?? '')];
+            }
+        }
+
+        return $blocks;
     }
 
     /** @param array<string, mixed> $response */

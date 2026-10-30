@@ -11,6 +11,7 @@ import PromptComposer, {
 } from '../PromptComposer/PromptComposer'
 import { useSlots } from '../slots/useSlots'
 import ThinkingIndicator from '../ThinkingIndicator'
+import ToolActivity, { type ToolActivityMode } from './ToolActivity'
 
 export type { CommandOption, CommandsProvider, MentionOption, MentionsProvider }
 
@@ -45,6 +46,38 @@ export interface AssistantChatProps {
   /** Linked from the error line when no engine is set up (default `bootstrap.settingsUrl`). */
   settingsHref?: string
   className?: string
+  /**
+   * How a reply shows the tools the assistant used: `summary` (default) one line
+   * with a Details toggle, `chips` a badge per call, `hidden` nothing.
+   */
+  toolActivity?: ToolActivityMode
+}
+
+/**
+ * The steps where the assistant only used tools (no text) are folded into the
+ * reply that follows them, so one answer shows one line of activity instead of a
+ * bubble per step. Each message keeps its index in the transcript.
+ */
+function withMergedTools(messages: ChatMessage[], mode: ToolActivityMode): { message: ChatMessage, index: number }[] {
+  if (mode === 'chips') return messages.map((message, index) => ({ message, index }))
+  const out: { message: ChatMessage, index: number }[] = []
+  let carried: NonNullable<ChatMessage['tools']> = []
+  messages.forEach((message, index) => {
+    if (message.role !== 'assistant') {
+      carried = []
+      out.push({ message, index })
+      return
+    }
+    const tools = [...carried, ...(message.tools || [])]
+    const next = messages[index + 1]
+    if (!message.text.trim() && next?.role === 'assistant') {
+      carried = tools
+      return
+    }
+    carried = []
+    out.push({ message: tools.length ? { ...message, tools } : message, index })
+  })
+  return out
 }
 
 /** How long an open request waits for the first load before giving up. */
@@ -57,16 +90,21 @@ const OPEN_WAIT_MS = 5000
 export default function AssistantChat({
   title, showHeader = true, onClose, context, mentions, commands, suggestions = [], emptyState, renderPreviewBar,
   renderMessageFooter, renderMessage, footerNote, placeholder, onEvent, onSend, onError, switchBlockedReason, linkPolicy,
-  settingsHref, className,
+  settingsHref, className, toolActivity = 'summary',
 }: AssistantChatProps) {
   const { __, sprintf } = useI18n()
   const bootstrap = useBootstrap()
-  const { Button, Badge, Icon } = useSlots()
+  const { Button, Icon } = useSlots()
   const assistant = useAssistant({ context })
   const [historyOpen, setHistoryOpen] = useState(false)
   const historyOn = useFeature('history')
+  // Opt-in (PluginContext FEATURE_ATTACHMENTS): off unless the plugin says so.
+  const attachmentsOn = bootstrap.features.attachments === true
+  const attachmentRules = attachmentsOn ? bootstrap.attachments : null
   const bottom = useRef<HTMLDivElement>(null)
-  const { messages, pending, busy, loaded, error, engine, engineReason, draft, conversation, extra } = assistant
+  const { messages, pending, busy, loaded, error, engine, engineReason, draft, conversation, extra, live } = assistant
+  const lastReply = [...messages].reverse().find(message => message.role === 'assistant' && !message.optimistic)?.text || ''
+  const announcement = busy ? __('The assistant is answering…') : (error || pending?.title || lastReply).slice(0, 400)
   const blocked = switchBlockedReason || ''
   const settingsLink = settingsHref ?? bootstrap.settingsUrl ?? undefined
 
@@ -82,8 +120,10 @@ export default function AssistantChat({
   }, [assistant.reset, blocked]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Store events and the window bus (`aiKitBus(slug).open()`), both to the host and to the open handler.
-  const latest = useRef({ loaded, count: messages.length, send, reset, open: assistant.open, setDraft: assistant.setDraft })
-  latest.current = { loaded, count: messages.length, send, reset, open: assistant.open, setDraft: assistant.setDraft }
+  const latest = useRef({ loaded, blocked, count: messages.length, send, reset, open: assistant.open, setDraft: assistant.setDraft })
+  latest.current = { loaded, blocked, count: messages.length, send, reset, open: assistant.open, setDraft: assistant.setDraft }
+  // A request for a new chat while switching is blocked: it waits here, never goes into the current chat.
+  const [held, setHeld] = useState<OpenRequest | null>(null)
 
   const handleOpen = useCallback((detail: OpenRequest) => {
     let waited = 0
@@ -91,6 +131,10 @@ export default function AssistantChat({
       if (!latest.current.loaded && waited < OPEN_WAIT_MS) {
         waited += 100
         window.setTimeout(run, 100)
+        return
+      }
+      if (!detail.conversationId && detail.newChat && latest.current.count > 0 && latest.current.blocked) {
+        setHeld(detail)
         return
       }
       if (detail.conversationId) await latest.current.open(detail.conversationId)
@@ -102,6 +146,12 @@ export default function AssistantChat({
     }
     void run()
   }, [])
+
+  useEffect(() => {
+    if (!held || blocked) return
+    setHeld(null)
+    handleOpen(held)
+  }, [held, blocked, handleOpen])
 
   useAiKitEvents((event) => {
     onEvent?.(event)
@@ -131,14 +181,22 @@ export default function AssistantChat({
     const node = (
       <div className={['aikit-chat__bubble', mine ? 'aikit-chat__bubble--user' : 'aikit-chat__bubble--assistant', message.optimistic ? 'aikit-chat__bubble--optimistic' : ''].join(' ').trim()}>
         {mine ? <div className="aikit-chat__text">{message.text}</div> : <Markdown text={message.text} linkPolicy={linkPolicy} />}
-        {message.tools && message.tools.length > 0 && (
-          <div className="aikit-chat__tools">
-            {message.tools.map((tool, i) => (
-              // eslint-disable-next-line react/no-array-index-key
-              <Badge key={i} tone={tool.error ? 'danger' : 'accent'} title={tool.name}>{tool.title}</Badge>
+        {mine && message.attachments && message.attachments.length > 0 && (
+          <ul className="aikit-chat__files" aria-label={__('Attached files')}>
+            {message.attachments.map(file => (
+              <li
+                key={file.id}
+                className={['aikit-chat__file', file.expired ? 'aikit-chat__file--expired' : ''].join(' ').trim()}
+                title={file.expired ? __('No longer kept on this site, so the assistant cannot read it again. Attach it again if needed.') : undefined}
+              >
+                <Icon name="attach" size={12} />
+                <span>{file.name}</span>
+                {file.expired && <span className="aikit-chat__file-state">{__('expired')}</span>}
+              </li>
             ))}
-          </div>
+          </ul>
         )}
+        {message.tools && message.tools.length > 0 && <ToolActivity tools={message.tools} mode={toolActivity} />}
         {renderMessageFooter?.(message, index)}
       </div>
     )
@@ -151,6 +209,9 @@ export default function AssistantChat({
   }
 
   const heading = title ?? sprintf(__('%s assistant'), bootstrap.name)
+  // A named chat shows its name; the assistant's name moves next to the engine.
+  const chatTitle = conversation.id ? (conversation.title || '').trim() : ''
+  const engineLabel = engine ? engine.label : __('Not connected')
   const composerDisabled = !!pending || !engine || !assistant.canUse
 
   return (
@@ -160,9 +221,9 @@ export default function AssistantChat({
           <div className="aikit-chat__heading">
             <div className="aikit-chat__title">
               <Icon name="spark" size={18} className="aikit-chat__title-icon" />
-              <span>{heading}</span>
+              <span className="aikit-chat__title-text" title={chatTitle || undefined}>{chatTitle || heading}</span>
             </div>
-            <small className="aikit-chat__subtitle">{engine ? engine.label : __('Not connected')}</small>
+            <small className="aikit-chat__subtitle">{chatTitle ? `${heading} · ${engineLabel}` : engineLabel}</small>
           </div>
           <div className="aikit-chat__head-actions">
             {historyOn && (
@@ -187,20 +248,23 @@ export default function AssistantChat({
               </span>
             )}
             <Button
-              variant="secondary"
+              variant="ghost"
               size="sm"
+              icon={<Icon name="new-chat" />}
+              aria-label={__('New chat')}
               disabled={busy || !!blocked || messages.length === 0}
-              title={blocked || undefined}
+              title={blocked || __('New chat')}
               onClick={() => { void reset() }}
-            >
-              {__('New chat')}
-            </Button>
+            />
             {onClose && <Button variant="ghost" size="sm" icon={<Icon name="close" />} aria-label={__('Close the assistant')} onClick={onClose} />}
           </div>
         </header>
       )}
 
-      <div className="aikit-chat__body" aria-live="polite">
+      {/* Screen readers hear a finished reply once, not every streamed word. */}
+      <div className="aikit-sr-only" role="status" aria-live="polite">{announcement}</div>
+
+      <div className="aikit-chat__body">
         {loaded && messages.length === 0 && !error && (
           <div className="aikit-chat__empty">
             {emptyState ?? <p>{__('Ask about this site. The assistant uses the same tools and limits as connected AI apps.')}</p>}
@@ -215,11 +279,18 @@ export default function AssistantChat({
           </div>
         )}
 
-        {messages.map(bubble)}
+        {withMergedTools(messages, toolActivity).map(({ message, index }) => bubble(message, index))}
 
         {pending && <PendingActionCard pending={pending} busy={busy} onDecide={approve => { void assistant.decide(approve) }} />}
 
-        {busy && <ThinkingIndicator />}
+        {busy && live && (live.text || live.tools.length > 0) ? (
+          <div className="aikit-chat__message aikit-chat__message--assistant">
+            <div className="aikit-chat__bubble aikit-chat__bubble--assistant aikit-chat__bubble--live" aria-busy="true">
+              {live.text && <Markdown text={live.text} linkPolicy={linkPolicy} />}
+              <ToolActivity tools={live.tools} mode={toolActivity === 'chips' ? 'summary' : toolActivity} />
+            </div>
+          </div>
+        ) : busy && <ThinkingIndicator />}
 
         {/* No engine: say why and where to set one up, instead of a silent, disabled composer. */}
         {loaded && !engine && !error && assistant.canUse && (
@@ -234,6 +305,13 @@ export default function AssistantChat({
           </div>
         )}
 
+        {held && blocked && (
+          <div className="aikit-chat__error" role="status">
+            {blocked}
+            {' '}
+            {__('Your request starts a new chat then.')}
+          </div>
+        )}
         {error && (
           <div className="aikit-chat__error" role="alert">
             {error}
@@ -259,6 +337,13 @@ export default function AssistantChat({
           placeholder={pending ? __('Confirm or cancel the action first') : (placeholder ?? __('Ask anything…'))}
           mentions={mentions}
           commands={allCommands}
+          attachments={attachmentRules ? {
+            items: assistant.attachments,
+            accept: attachmentRules.accept,
+            onAdd: assistant.attach,
+            onRemove: assistant.detach,
+            note: sprintf(__('Files go to the AI provider with your message and are deleted from this site after %d hours.'), attachmentRules.ttlHours),
+          } : undefined}
         />
         {footerNote !== null && (
           <div className="aikit-chat__note">{footerNote ?? __('AI can be wrong. Personal data is masked unless allowed in the assistant settings.')}</div>

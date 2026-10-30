@@ -17,9 +17,13 @@ use BitApps\AiKit\Tests\TestCase;
  */
 final class AssistantTest extends TestCase
 {
-    private const ADMIN = 5;
+    public const ADMIN_ID = 5;
+
+    private const ADMIN = self::ADMIN_ID;
 
     public static int $deleted = 0;
+
+    public static string $openedMeanwhile = '';
 
     private ScriptedEngine $engine;
 
@@ -76,6 +80,46 @@ final class AssistantTest extends TestCase
 
         $stored = get_user_meta(self::ADMIN, 'bit_demo_ai_conversation', true);
         self::assertCount(4, $stored['messages'], 'user, assistant, tool results, assistant');
+    }
+
+    public function testCallsOverTheStepCapAreMarkedAsNotRun(): void
+    {
+        $calls = [];
+        for ($i = 0; $i < \BitApps\AiKit\Ai\AgentLoop::MAX_CALLS_PER_TURN + 2; ++$i) {
+            $calls[] = ['id' => 't' . $i, 'name' => 'list-forms', 'input' => []];
+        }
+        $this->engine->script = [
+            ['text' => '', 'tool_calls' => $calls],
+            ['text' => 'Done.', 'tool_calls' => []],
+        ];
+
+        $view = $this->assistant()->chat(self::ADMIN, 'Count everything');
+
+        $tools = $view['messages'][1]['tools'];
+        self::assertCount(\BitApps\AiKit\Ai\AgentLoop::MAX_CALLS_PER_TURN + 2, $tools);
+        self::assertFalse($tools[0]['error']);
+        self::assertArrayNotHasKey('skipped', $tools[0]);
+        $last = end($tools);
+        self::assertTrue($last['skipped'], 'refused for the cap, not failed');
+        self::assertFalse($last['error']);
+        self::assertStringContainsString('Not run: at most', wp_json_encode($this->engine->calls[1]['messages']), 'the model is still told');
+    }
+
+    public function testProgressReportsTextAndEachTool(): void
+    {
+        $this->engine->script = [
+            ['text' => 'Let me look.', 'tool_calls' => [['id' => 't1', 'name' => 'list-forms', 'input' => []]]],
+            ['text' => 'One form.', 'tool_calls' => []],
+        ];
+        $events = [];
+
+        $this->assistant()->onProgress(static function (array $event) use (&$events): void {
+            $events[] = $event;
+        })->chat(self::ADMIN, 'Which forms?');
+
+        $summary = array_map(static fn ($e) => $e['type'] . ':' . ($e['delta'] ?? $e['status'] ?? $e['turn'] ?? ''), $events);
+        self::assertSame(['step:0', 'text:Let me look.', 'tool:running', 'tool:ok', 'step:1', 'text:One form.'], $summary, 'an engine that does not stream gives each step\'s text at once');
+        self::assertSame('List forms', $events[2]['title']);
     }
 
     public function testPersonalDataIsMaskedUnlessAllowed(): void
@@ -145,6 +189,116 @@ final class AssistantTest extends TestCase
         $this->engine->fail = null;
         self::assertSame('no_pending', $this->assistant()->decide(self::ADMIN, true)['reason']);
         self::assertSame(1, self::$deleted);
+    }
+
+    public function testAFailedTurnKeepsTheActionsThatRanSoTheChatCarriesOn(): void
+    {
+        $this->engine->script = [['text' => 'I will delete form 7.', 'tool_calls' => [['id' => 'd1', 'name' => 'delete-form', 'input' => ['form_id' => 7]]]]];
+        $this->assistant()->chat(self::ADMIN, 'Delete form 7');
+        $this->engine->fail = new AiException('Provider down.', 'provider_error');
+
+        $failed = $this->assistant()->decide(self::ADMIN, true);
+
+        self::assertSame('provider_error', $failed['reason']);
+        $stored = get_user_meta(self::ADMIN, 'bit_demo_ai_conversation', true)['messages'];
+        self::assertSame(['user', 'assistant', 'tool'], array_column($stored, 'role'), 'the deletion and its result are kept');
+        self::assertStringContainsString('deleted', $stored[2]['results'][0]['content']);
+
+        // The next message goes out with every tool call answered, so the provider accepts it.
+        $this->engine->fail = null;
+        $this->engine->script = [['text' => 'Form 7 is gone.', 'tool_calls' => []]];
+        $view = $this->assistant()->chat(self::ADMIN, 'Did it work?');
+        self::assertArrayNotHasKey('error', $view);
+        self::assertSame(['user', 'assistant', 'tool', 'user'], array_column(end($this->engine->calls)['messages'], 'role'));
+    }
+
+    public function testAToolCallStoredWithoutResultsIsAnsweredBeforeTheNextCall(): void
+    {
+        // A chat saved by an older kit after a failed turn: the call has no results.
+        update_user_meta(self::ADMIN, 'bit_demo_ai_conversation', ['messages' => [
+            ['role' => 'user', 'content' => 'Delete form 7'],
+            ['role' => 'assistant', 'text' => '', 'tool_calls' => [['id' => 'd1', 'name' => 'delete-form', 'input' => ['form_id' => 7]]]],
+        ], 'pending' => null, 'updated' => time()]);
+        $this->engine->script = [['text' => 'Hello.', 'tool_calls' => []]];
+
+        $view = $this->assistant()->chat(self::ADMIN, 'Hi');
+
+        self::assertArrayNotHasKey('error', $view);
+        $sent = $this->engine->calls[0]['messages'];
+        self::assertSame(['user', 'assistant', 'tool', 'user'], array_column($sent, 'role'));
+        self::assertSame('d1', $sent[2]['results'][0]['id']);
+        self::assertTrue($sent[2]['results'][0]['skipped']);
+        self::assertSame(0, self::$deleted, 'answered as not run, never run');
+    }
+
+    public function testATurnIsSavedToTheChatItBeganInEvenIfAnotherWasOpenedMeanwhile(): void
+    {
+        $repository = new MemoryConversations();
+        Kit::reset();
+        Kit::boot($this->context(['services' => ['conversations' => $repository]]));
+        add_filter(Contract::toolProvidersHook('bit-demo'), static function ($providers) {
+            // Another tab opens the other chat while this turn runs.
+            $providers[] = [['name' => 'slow-lookup', 'description' => 'Slow.', 'annotations' => ['readonly' => true], 'handler' => static function () {
+                Kit::for('bit-demo')->assistant()->open(AssistantTest::ADMIN_ID, AssistantTest::$openedMeanwhile);
+
+                return ['ok' => true];
+            }]];
+
+            return $providers;
+        }, 10, 1);
+        $this->engine->script = [['text' => 'B', 'tool_calls' => []], ['text' => '', 'tool_calls' => [['id' => 's1', 'name' => 'slow-lookup', 'input' => []]]], ['text' => 'A done', 'tool_calls' => []]];
+        $other = $this->assistant()->chat(self::ADMIN, 'Chat B')['conversation']['id'];
+        self::$openedMeanwhile = $other;
+        $this->assistant()->reset(self::ADMIN);
+
+        $view = $this->assistant()->chat(self::ADMIN, 'Chat A');
+
+        $mine = array_values(array_filter(array_keys($repository->rows), static fn ($id) => (string) $id !== $other))[0];
+        self::assertSame('A done', end($repository->rows[$mine]['messages'])['text'], 'the turn went to the chat it began in');
+        self::assertSame(['user', 'assistant'], array_column($repository->rows[$other]['messages'], 'role'), 'the chat opened meanwhile is untouched');
+        self::assertSame($other, $view['conversation']['id'], 'and it stays the open one');
+    }
+
+    public function testOneTurnAtATimePerUser(): void
+    {
+        $lock = Kit::for('bit-demo')->context()->optionName('ai_turn_' . self::ADMIN);
+        set_transient($lock, time(), 60);
+
+        $busy = $this->assistant()->chat(self::ADMIN, 'Hello from a second tab');
+        self::assertSame('turn_running', $busy['reason']);
+        self::assertSame('turn_running', $this->assistant()->decide(self::ADMIN, true)['reason']);
+        self::assertSame([], $this->engine->calls);
+
+        delete_transient($lock);
+        self::assertArrayNotHasKey('error', $this->assistant()->chat(self::ADMIN, 'Hello'));
+        self::assertFalse(get_transient($lock), 'released when the turn ends');
+        self::assertArrayNotHasKey('error', $this->assistant()->chat(self::ADMIN, 'Hello again'));
+    }
+
+    public function testDeletingAUserRemovesTheirChatsAndThePrivacyToolsSeeThem(): void
+    {
+        $repository = new MemoryConversations();
+        Kit::reset();
+        Kit::boot($this->context(['services' => ['conversations' => $repository]]));
+        $this->engine->script = [['text' => 'Sure.', 'tool_calls' => []]];
+        $this->assistant()->chat(self::ADMIN, 'Show jane@example.com entries');
+        $repository->save(77, null, 'Someone else', [['role' => 'user', 'content' => 'Mine']], null, []);
+
+        $exporters = apply_filters('wp_privacy_personal_data_exporters', []);
+        $export = ($exporters['bit-demo-ai-chats']['callback'])('user5@example.test', 1);
+        self::assertTrue($export['done']);
+        self::assertCount(1, $export['data']);
+        self::assertStringContainsString('You: Show jane@example.com entries', $export['data'][0]['data'][3]['value']);
+        self::assertStringContainsString('Assistant: Sure.', $export['data'][0]['data'][3]['value']);
+
+        do_action('delete_user', self::ADMIN);
+        self::assertSame(0, $repository->list(self::ADMIN)['total']);
+        self::assertSame(1, $repository->list(77)['total'], 'other users keep theirs');
+
+        $erasers = apply_filters('wp_privacy_personal_data_erasers', []);
+        $erased = ($erasers['bit-demo-ai-chats']['callback'])('user77@example.test');
+        self::assertTrue($erased['items_removed']);
+        self::assertSame(0, $repository->list(77)['total']);
     }
 
     public function testWriteToolsAlsoWaitForTheUserInTheAssistant(): void

@@ -100,9 +100,10 @@
   border-bottom: 1px solid var(--aikit-border);
 }
 .aikit-chat__heading:where(.aikit, .aikit *) { min-width: 0; flex: 1; }
-.aikit-chat__title:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.aikit-chat__title:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; font-size: 15px; }
+.aikit-chat__title-text:where(.aikit, .aikit *) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .aikit-chat__title-icon:where(.aikit, .aikit *) { flex: 0 0 auto; color: var(--aikit-accent); }
-.aikit-chat__subtitle:where(.aikit, .aikit *) { display: block; font-size: 12px; color: var(--aikit-fg-muted); }
+.aikit-chat__subtitle:where(.aikit, .aikit *) { display: block; margin-top: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--aikit-fg-muted); }
 .aikit-chat__head-actions:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .aikit-chat__history-anchor:where(.aikit, .aikit *) { position: relative; display: inline-flex; }
 .aikit-chat__head-actions:where(.aikit, .aikit *) .aikit-btn[aria-pressed="true"] { background: var(--aikit-accent-soft); color: var(--aikit-accent); }
@@ -257,8 +258,9 @@
 .aikit-composer__input:focus:where(.aikit, .aikit *) { outline: none; box-shadow: none; }
 .aikit-composer__input:where(.aikit, .aikit *)::placeholder { color: var(--aikit-fg-faint); }
 .aikit-composer__input:disabled:where(.aikit, .aikit *) { cursor: not-allowed; color: var(--aikit-fg-muted); }
-.aikit-composer__bar:where(.aikit, .aikit *) { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px 12px; }
-.aikit-composer__hint:where(.aikit, .aikit *) { font-size: 11px; color: var(--aikit-fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aikit-composer__bar:where(.aikit, .aikit *) { display: flex; align-items: center; gap: 2px; padding: 4px 6px 6px; }
+/* The hint sits next to the attach button and takes the free space; send stays at the end. */
+.aikit-composer__hint:where(.aikit, .aikit *) { flex: 1; min-width: 0; font-size: 11px; color: var(--aikit-fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .aikit-composer__send:where(.aikit, .aikit *) { width: 30px; height: 30px; border-radius: 50%; }
 .aikit-composer__send:disabled:where(.aikit, .aikit *) { opacity: 0.35; }
 
@@ -292,3 +294,100 @@
 .aikit-composer__menu-row--active:where(.aikit, .aikit *) { background: var(--aikit-accent-soft); }
 .aikit-composer__menu-label:where(.aikit, .aikit *) { max-width: 60%; font-weight: 500; color: var(--aikit-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .aikit-composer__menu-hint:where(.aikit, .aikit *) { font-size: 12px; color: var(--aikit-fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- attachments ------------------------------------------------------------ */
+
+.aikit-composer__box--drop:where(.aikit, .aikit *) { border-color: var(--aikit-accent); box-shadow: var(--aikit-focus); }
+.aikit-composer__files:where(.aikit, .aikit *) { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 8px 8px 0; list-style: none; }
+.aikit-composer__file:where(.aikit, .aikit *) {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  padding: 4px 6px 4px 4px;
+  overflow: hidden;
+  border: 1px solid var(--aikit-border);
+  border-radius: var(--aikit-radius-sm);
+  background: var(--aikit-bg-soft);
+  font-size: 12px;
+}
+.aikit-composer__file--error:where(.aikit, .aikit *) { border-color: var(--aikit-danger); background: var(--aikit-danger-soft); }
+.aikit-composer__file-thumb:where(.aikit, .aikit *),
+.aikit-composer__file-kind:where(.aikit, .aikit *) {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.aikit-composer__file-kind:where(.aikit, .aikit *) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--aikit-accent-soft);
+  color: var(--aikit-accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.aikit-composer__file-text:where(.aikit, .aikit *) { display: flex; flex-direction: column; min-width: 0; }
+.aikit-composer__file-name:where(.aikit, .aikit *) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--aikit-fg); font-weight: 500; }
+.aikit-composer__file-meta:where(.aikit, .aikit *) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--aikit-fg-muted); font-size: 11px; }
+.aikit-composer__file--error:where(.aikit, .aikit *) .aikit-composer__file-meta { color: var(--aikit-danger); }
+.aikit-composer__file-progress:where(.aikit, .aikit *) {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--aikit-accent);
+  transition: width 0.15s;
+}
+.aikit-composer__file-remove:where(.aikit, .aikit *) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aikit-fg-muted);
+  cursor: pointer;
+}
+.aikit-composer__file-remove:hover:where(.aikit, .aikit *) { background: var(--aikit-bg-muted); color: var(--aikit-fg); }
+.aikit-composer__hint:first-child:where(.aikit, .aikit *) { padding-left: 6px; }
+.aikit-composer__attach:where(.aikit, .aikit *) { flex: 0 0 auto; color: var(--aikit-fg-muted); }
+.aikit-composer__attach:hover:where(.aikit, .aikit *) { color: var(--aikit-accent); }
+.aikit-composer__files-note:where(.aikit, .aikit *) { margin-top: 4px; font-size: 11px; color: var(--aikit-fg-muted); }
+
+.aikit-chat__files:where(.aikit, .aikit *) { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.aikit-chat__file:where(.aikit, .aikit *) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--aikit-bg);
+  font-size: 11px;
+  color: var(--aikit-fg-muted);
+}
+.aikit-chat__file:where(.aikit, .aikit *) span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.aikit-chat__file--expired:where(.aikit, .aikit *) > span:not(.aikit-chat__file-state) { text-decoration: line-through; opacity: .7; }
+.aikit-chat__file-state:where(.aikit, .aikit *) { flex-shrink: 0; padding: 0 4px; border-radius: 3px; background: var(--aikit-border); font-size: 10px; text-transform: uppercase; letter-spacing: .02em; }
+
+/* --- tool activity ---------------------------------------------------------- */
+
+.aikit-chat__activity:where(.aikit, .aikit *) { margin-top: 6px; font-size: 11px; color: var(--aikit-fg-muted); }
+.aikit-chat__activity-line:where(.aikit, .aikit *) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.aikit-chat__activity-line:where(.aikit, .aikit *) > svg { flex: 0 0 auto; color: var(--aikit-success); }
+.aikit-chat__activity-failed:where(.aikit, .aikit *) { color: var(--aikit-danger); }
+.aikit-chat__activity-skipped:where(.aikit, .aikit *) { color: var(--aikit-warning); cursor: help; }
+.aikit-chat__activity-toggle:where(.aikit, .aikit *) { height: auto; min-height: 0; padding: 0 4px; font-size: 11px; color: var(--aikit-accent); }
+.aikit-chat__activity-list:where(.aikit, .aikit *) { margin: 4px 0 0; padding: 6px 8px; list-style: none; border-radius: var(--aikit-radius-sm); background: var(--aikit-bg); }
+.aikit-chat__activity-list:where(.aikit, .aikit *) li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.aikit-chat__activity-count:where(.aikit, .aikit *) { white-space: nowrap; }

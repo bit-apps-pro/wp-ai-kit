@@ -10,8 +10,7 @@
   width: 320px;
   max-width: calc(100vw - 32px);
   max-height: min(480px, calc(100vh - 120px));
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 10px;
   border: 1px solid var(--aikit-border);
   border-radius: var(--aikit-radius);
@@ -22,6 +21,22 @@
   font-size: var(--aikit-font-size);
 }
 
+/* Search, New chat and Delete all keep their size; the chats between them take the rest and scroll. */
+.aikit-history:where(.aikit, .aikit *) > * { flex: 0 0 auto; }
+.aikit-history__body:where(.aikit, .aikit *) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 96px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Room for the row focus ring and the scrollbar. */
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+.aikit-history--popover:where(.aikit, .aikit *) .aikit-history__body { min-height: 0; }
 .aikit-history__search:where(.aikit, .aikit *) { width: 100%; }
 .aikit-history__note:where(.aikit, .aikit *) { font-size: 12px; }
 .aikit-history__empty:where(.aikit, .aikit *) { padding: 16px 0; font-size: 13px; }
@@ -85,8 +100,20 @@
 
 .aikit-history__more-btn:where(.aikit, .aikit *) { align-self: center; }
 
-.aikit-history__archived:where(.aikit, .aikit *) { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--aikit-border); }
-.aikit-history__archived-toggle:where(.aikit, .aikit *) { align-self: flex-start; color: var(--aikit-fg-muted); font-weight: 500; }
+/* Closed, the Archived heading stays at the bottom of the scroll, so it shows however long the live list is. */
+.aikit-history__archived:where(.aikit, .aikit *) {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  /* Full width over the scroll's side padding, so rows passing under it do not show at its edges. */
+  margin: 4px -4px 0;
+  padding: 6px 4px 2px;
+  border-top: 1px solid var(--aikit-border);
+  background: var(--aikit-bg);
+}
+.aikit-history__archived--open:where(.aikit, .aikit *) { position: static; }
+.aikit-history__archived-toggle:where(.aikit, .aikit *) { color: var(--aikit-fg-muted); font-weight: 500; }
 
 .aikit-history__footer:where(.aikit, .aikit *) { display: flex; justify-content: flex-end; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--aikit-border); }
 .aikit-history__clear:where(.aikit, .aikit *) { color: var(--aikit-fg-muted); font-weight: 400; }

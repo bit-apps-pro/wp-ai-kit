@@ -117,6 +117,21 @@ describe('AssistantSettingsForm', () => {
     expect(screen.getByText(/Saved, ends in …-key\./)).toBeInTheDocument()
   })
 
+  it('asks for a base URL when the provider is an OpenAI-compatible service', async () => {
+    const user = userEvent.setup()
+    const { mock } = setup()
+    const provider = await screen.findByLabelText(/^Provider/)
+    expect(screen.queryByLabelText(/^Base URL/)).not.toBeInTheDocument()
+
+    await user.selectOptions(provider, 'openai_compatible')
+    await user.type(screen.getByLabelText(/^Base URL/), 'https://api.mistral.ai/v1')
+    await user.type(screen.getByLabelText(/^Model/), 'mistral-large-latest')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => expect(saveCalls(mock)).toHaveLength(1))
+    expect(saveCalls(mock)[0]).toMatchObject({ provider: 'openai_compatible', base_url: 'https://api.mistral.ai/v1', model: 'mistral-large-latest' })
+  })
+
   it('removes the saved key', async () => {
     const { mock } = setup()
     const trash = await screen.findByRole('button', { name: 'Remove the saved key' })

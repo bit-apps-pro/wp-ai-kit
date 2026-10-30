@@ -40,10 +40,14 @@ final class RestRoutes
         return [
             '/assistant/view'                     => [['GET', AssistantController::class, 'view', self::LEVEL_USE]],
             '/assistant/chat'                     => [['POST', AssistantController::class, 'chat', self::LEVEL_USE]],
+            '/assistant/stream'                   => [['POST', AssistantController::class, 'stream', self::LEVEL_USE]],
             '/assistant/decide'                   => [['POST', AssistantController::class, 'decide', self::LEVEL_USE]],
+            '/assistant/decide/stream'            => [['POST', AssistantController::class, 'decideStream', self::LEVEL_USE]],
             '/assistant/reset'                    => [['POST', AssistantController::class, 'reset', self::LEVEL_USE]],
             '/assistant/history'                  => [['GET', AssistantController::class, 'history', self::LEVEL_USE]],
             "/assistant/conversations/{$id}/open" => [['POST', AssistantController::class, 'open', self::LEVEL_USE]],
+            '/assistant/attachments'              => [['POST', AssistantController::class, 'upload', self::LEVEL_USE]],
+            "/assistant/attachments/{$id}"        => [['DELETE', AssistantController::class, 'deleteAttachment', self::LEVEL_USE]],
             "/assistant/conversations/{$id}"      => [
                 ['PATCH', AssistantController::class, 'update', self::LEVEL_USE],
                 ['DELETE', AssistantController::class, 'forget', self::LEVEL_USE],
@@ -93,6 +97,12 @@ final class RestRoutes
         }
         if ('/assistant/history' === $route || $prefix('/assistant/conversations/')) {
             $needs[] = PluginContext::FEATURE_HISTORY;
+        }
+        if ($prefix('/assistant/attachments')) {
+            $needs[] = PluginContext::FEATURE_ATTACHMENTS;
+        }
+        if ('/assistant/stream' === $route || '/assistant/decide/stream' === $route) {
+            $needs[] = PluginContext::FEATURE_STREAM;
         }
         if ('/mcp/activity' === $route) {
             $needs[] = PluginContext::FEATURE_AUDIT;

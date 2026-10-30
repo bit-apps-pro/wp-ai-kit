@@ -5,10 +5,12 @@ namespace BitApps\AiKit\Tests\Rest;
 use BitApps\AiKit\Contract;
 use BitApps\AiKit\Kit;
 use BitApps\AiKit\PluginContext;
+use BitApps\AiKit\Rest\AssistantController;
 use BitApps\AiKit\Rest\RestRoutes;
 use BitApps\AiKit\Tests\Ai\MemoryConversations;
 use BitApps\AiKit\Tests\Ai\ScriptedEngine;
 use BitApps\AiKit\Tests\TestCase;
+use BitApps\AiKit\Tools\ToolContext;
 
 /**
  * The kit's admin REST routes (`<ns>/ai/*`): registration, permissions, the
@@ -181,6 +183,94 @@ final class RestRoutesTest extends TestCase
         self::assertCount(3, $failed->get_data()['messages'], 'user, the tool turn, the answer');
     }
 
+    public function testAStreamedTurnReportsItsProgressThenTheView(): void
+    {
+        $this->boot();
+        self::assertArrayNotHasKey('/bit-demo/v1/ai/assistant/stream', \AiKitRest::$routes, 'streaming is opt-in');
+
+        resetAiKitTestState();
+        Kit::reset();
+        update_option('bit_demo_ai_settings', ['enabled' => true, 'access_level' => 'write']);
+        add_filter(Contract::toolProvidersHook('bit-demo'), static fn ($providers) => array_merge($providers, [[
+            ['name' => 'list-forms', 'title' => 'List forms', 'description' => 'Forms.', 'annotations' => ['readonly' => true], 'handler' => static fn () => ['items' => [['id' => 7]]]],
+        ]]), 10, 1);
+        $kit = Kit::boot($this->context([
+            'features' => [PluginContext::FEATURE_REST_UI => true, PluginContext::FEATURE_STREAM => true],
+            'can_use'  => static fn ($userId) => self::MEMBER === (int) $userId,
+            'services' => ['conversations' => $this->conversations],
+        ]));
+        $engine = $this->engine;
+        $kit->useEngineFactory(static fn () => $engine);
+        do_action('rest_api_init');
+        self::assertArrayHasKey('/bit-demo/v1/ai/assistant/stream', \AiKitRest::$routes);
+        self::assertTrue($kit->uiBootstrap()['features']['stream']);
+
+        \AiKitTestState::$currentUser = self::MEMBER;
+        $this->engine->script = [
+            ['text' => 'Looking.', 'tool_calls' => [['id' => 't1', 'name' => 'list-forms', 'input' => []]]],
+            ['text' => 'You have form 7.', 'tool_calls' => []],
+        ];
+        [, $request] = $this->endpoint('POST', '/assistant/stream', ['message' => 'Which forms?'], []);
+        $events = [];
+
+        $view = (new AssistantController($kit))->streamTo($request, static function (string $event, array $data) use (&$events): void {
+            $events[] = [$event, $data];
+        });
+
+        self::assertSame(['step', 'text', 'tool', 'tool', 'step', 'text', 'done'], array_column($events, 0));
+        self::assertSame('List forms', $events[2][1]['title']);
+        self::assertSame(200, end($events)[1]['status']);
+        self::assertSame('You have form 7.', end($view['messages'])['text']);
+        self::assertSame($view, end($events)[1]['view']);
+    }
+
+    public function testAnApprovedActionStreamsTheRestOfTheTurn(): void
+    {
+        resetAiKitTestState();
+        Kit::reset();
+        update_option('bit_demo_ai_settings', ['enabled' => true, 'access_level' => 'destructive', 'confirm_destructive' => true]);
+        $deleted = new \ArrayObject();
+        add_filter(Contract::toolProvidersHook('bit-demo'), static fn ($providers) => array_merge($providers, [[
+            ['name' => 'delete-form', 'title' => 'Delete form', 'description' => 'Delete.', 'annotations' => ['destructive' => true], 'handler' => static function () use ($deleted) {
+                $deleted[] = 7;
+
+                return ['deleted' => 7];
+            }],
+        ]]), 10, 1);
+        $kit = Kit::boot($this->context([
+            'features' => [PluginContext::FEATURE_REST_UI => true, PluginContext::FEATURE_STREAM => true],
+            'can_use'  => static fn ($userId) => self::MEMBER === (int) $userId,
+            'services' => ['conversations' => $this->conversations],
+        ]));
+        $engine = $this->engine;
+        $kit->useEngineFactory(static fn () => $engine);
+        do_action('rest_api_init');
+        self::assertArrayHasKey('/bit-demo/v1/ai/assistant/decide/stream', \AiKitRest::$routes);
+
+        \AiKitTestState::$currentUser = self::MEMBER;
+        $this->engine->script = [
+            ['text' => 'Deleting.', 'tool_calls' => [['id' => 't1', 'name' => 'delete-form', 'input' => []]]],
+            ['text' => 'Form 7 is deleted.', 'tool_calls' => []],
+        ];
+        $paused = $kit->assistant()->chat(self::MEMBER, 'Delete form 7');
+        self::assertNotNull($paused['pending']);
+
+        [, $request] = $this->endpoint('POST', '/assistant/decide/stream', ['approve' => true], []);
+        $events = [];
+        $view = (new AssistantController($kit))->decideStreamTo($request, static function (string $event, array $data) use (&$events): void {
+            $events[] = [$event, $data];
+        });
+
+        self::assertSame([7], $deleted->getArrayCopy(), 'the approved action ran');
+        self::assertSame(['tool', 'tool', 'step', 'text', 'done'], array_column($events, 0), 'the approved action runs, then the reply streams');
+        self::assertSame(['running', 'ok'], [$events[0][1]['status'], $events[1][1]['status']]);
+        self::assertSame('Delete form', $events[0][1]['title']);
+        self::assertSame('Form 7 is deleted.', end($view['messages'])['text']);
+        self::assertSame('done', end($events)[0]);
+        self::assertSame(200, end($events)[1]['status']);
+        self::assertNull($view['pending']);
+    }
+
     public function testConversationsAreListedRenamedFlaggedOpenedAndForgotten(): void
     {
         $this->boot();
@@ -224,6 +314,22 @@ final class RestRoutesTest extends TestCase
         self::assertSame(0, $this->call('GET', '/assistant/history', [], ['archived' => '1'])->get_data()['total']);
     }
 
+    public function testOnlyManagersSeeTheKeyHintsAndTheGateway(): void
+    {
+        $kit = $this->boot();
+        $kit->saveAiSettings(['provider' => 'openai_compatible', 'base_url' => 'https://gateway.example.com/v1', 'model' => 'm', 'api_key' => 'sk-test-abcd1234']);
+
+        \AiKitTestState::$currentUser = self::MANAGER;
+        $managed = $this->call('GET', '/settings/assistant')->get_data();
+        self::assertSame('…1234', $managed['keys']['openai_compatible']['hint']);
+        self::assertSame('https://gateway.example.com/v1', $managed['settings']['base_url']);
+
+        \AiKitTestState::$currentUser = self::MEMBER;
+        $used = $this->call('GET', '/settings/assistant')->get_data();
+        self::assertSame(['set' => true, 'hint' => ''], $used['keys']['openai_compatible']);
+        self::assertSame('', $used['settings']['base_url']);
+    }
+
     public function testSettingsScreensReadAndSave(): void
     {
         $this->boot();
@@ -251,7 +357,7 @@ final class RestRoutesTest extends TestCase
 
     public function testTheActivityLogPagesFiltersAndClears(): void
     {
-        $this->boot();
+        $kit = $this->boot();
         \AiKitTestState::$currentUser = self::MEMBER;
         $this->engine->script = [
             ['text' => '', 'tool_calls' => [['id' => 't1', 'name' => 'list-forms', 'input' => []], ['id' => 't2', 'name' => 'missing-tool', 'input' => []]]],
@@ -279,7 +385,12 @@ final class RestRoutesTest extends TestCase
         $mine = $this->call('GET', '/mcp/activity', [], ['user_id' => (string) self::MANAGER])->get_data();
         self::assertSame(2, $mine['total'], 'a member sees their own calls, whatever user they ask for');
         self::assertArrayNotHasKey('client_ref', $mine['filters']);
-        self::assertSame([self::MEMBER], array_unique(array_column($this->call('GET', '/mcp/state')->get_data()['recent'], 'user_id')));
+        self::assertSame([], $this->call('GET', '/mcp/state')->get_data()['recent'], "the MCP screen's summary leaves the assistant's calls to the assistant's screen");
+        foreach ([self::MEMBER, self::MANAGER] as $user) {
+            $kit->runner()->call('list-forms', [], new ToolContext(ToolContext::CHANNEL_MCP, $user, null, 'claude-desktop'));
+        }
+        $recent = $this->call('GET', '/mcp/state')->get_data()['recent'];
+        self::assertSame([['mcp', self::MEMBER]], array_map(static fn ($row) => [$row['channel'], $row['user_id']], $recent), 'connected apps only, a member\'s own');
         \AiKitTestState::$currentUser = self::MEMBER;
 
         self::assertSame(403, $this->permission('DELETE', '/mcp/activity')->get_error_data()['status'], 'clearing is for managers');

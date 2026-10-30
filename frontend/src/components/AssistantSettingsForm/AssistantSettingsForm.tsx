@@ -14,6 +14,7 @@ const PROVIDERS: { value: Provider, label: string }[] = [
   { value: 'claude', label: 'Anthropic Claude' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'gemini', label: 'Google Gemini' },
+  { value: 'openai_compatible', label: 'OpenAI-compatible (Mistral, Groq, OpenRouter…)' },
 ]
 
 /** The three access levels with their labels and help, translated. */
@@ -133,6 +134,7 @@ export default function AssistantSettingsForm({
     enabled: `${uid}-enabled`,
     provider: `${uid}-provider`,
     model: `${uid}-model`,
+    baseUrl: `${uid}-base-url`,
     models: `${uid}-models`,
     key: `${uid}-key`,
     turns: `${uid}-turns`,
@@ -302,7 +304,7 @@ interface EngineCardProps {
   state: AssistantState
   draft: AiSettings
   update: (patch: Partial<AiSettings>) => void
-  ids: { provider: string, model: string, models: string, key: string }
+  ids: { provider: string, model: string, baseUrl: string, models: string, key: string }
   apiKey: string
   setApiKey: (value: string) => void
   connectorsUrl: string
@@ -352,8 +354,21 @@ function EngineCard({ state, draft, update, ids, apiKey, setApiKey, connectorsUr
                 <Select id={ids.provider} value={draft.provider} options={PROVIDERS} onChange={value => update({ provider: value as Provider, model: '' })} />
               </div>
             </div>
+            {draft.provider === 'openai_compatible' && (
+              <div className="aikit-settings__row">
+                <SettingText
+                  label={__('Base URL')}
+                  htmlFor={ids.baseUrl}
+                  note={__('Chats and tool results are sent to this address.')}
+                  help={__('The service\'s API address up to /chat/completions, such as https://api.mistral.ai/v1. https only; local and private addresses are refused. Changing it removes the saved key.')}
+                />
+                <div className="aikit-settings__control">
+                  <TextInput id={ids.baseUrl} type="url" value={draft.base_url || ''} placeholder="https://api.example.com/v1" onChange={value => update({ base_url: value })} />
+                </div>
+              </div>
+            )}
             <div className="aikit-settings__row">
-              <SettingText label={__('Model')} htmlFor={ids.model} help={__('Leave empty for the first suggestion.')} />
+              <SettingText label={__('Model')} htmlFor={ids.model} help={draft.provider === 'openai_compatible' ? __('The model name as the service writes it, such as mistral-large-latest. Required.') : __('Leave empty for the first suggestion.')} />
               <div className="aikit-settings__control">
                 <TextInput id={ids.model} list={ids.models} value={draft.model} placeholder={suggestions[0] || ''} onChange={model => update({ model })} />
                 <datalist id={ids.models}>
@@ -450,7 +465,8 @@ function RecentActivity({ onViewAll }: { onViewAll?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const rows: AuditEvent[] = (activity.data?.rows || []).slice(0, 5)
+  // Until the narrowed query answers, the store may still hold the MCP screen's rows: show the assistant's only.
+  const rows: AuditEvent[] = (activity.data?.rows || []).filter(event => event.channel === 'assistant').slice(0, 5)
   const pending = status === 'idle' || (status === 'loading' && !activity.data)
 
   return (

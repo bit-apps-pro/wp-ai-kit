@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { type CSSProperties, useState } from 'react'
 import {
   Button as AntButton, Checkbox as AntCheckbox, Dropdown, Input, Modal as AntModal, Segmented, Select as AntSelect,
   Spin, Switch as AntSwitch, Tabs as AntTabs, Tag, Tooltip as AntTooltip, Typography, theme,
@@ -36,6 +36,9 @@ function Button({ variant = 'secondary', size = 'md', loading, disabled, icon, t
       className={className}
       aria-label={aria['aria-label']}
       aria-pressed={aria['aria-pressed']}
+      aria-expanded={aria['aria-expanded']}
+      aria-haspopup={aria['aria-haspopup']}
+      aria-controls={aria['aria-controls']}
       onClick={onClick}
     >
       {children}
@@ -125,14 +128,34 @@ function Tooltip({ title, children }: TooltipProps) {
 }
 
 function Menu({ trigger, items, ...aria }: MenuProps) {
+  // Controlled, so the trigger opens from the keyboard too (antd's Dropdown listens for clicks only).
+  const [open, setOpen] = useState(false)
   return (
     <Dropdown
       trigger={['click']}
+      open={open}
+      onOpenChange={setOpen}
       menu={{
-        items: items.map(item => ({ key: item.key, label: item.label, icon: item.icon, danger: item.danger, disabled: item.disabled, onClick: () => item.onClick() })),
+        'aria-label': aria['aria-label'],
+        items: items.map(item => ({ key: item.key, label: item.label, icon: item.icon, danger: item.danger, disabled: item.disabled, onClick: () => { setOpen(false); item.onClick() } })),
       }}
     >
-      <span role="button" tabIndex={0} aria-haspopup="menu" aria-label={aria['aria-label']} style={{ display: 'inline-flex' }}>{trigger}</span>
+      <span
+        role="button"
+        tabIndex={0}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={aria['aria-label']}
+        style={{ display: 'inline-flex' }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setOpen(o => !o)
+          }
+        }}
+      >
+        {trigger}
+      </span>
     </Dropdown>
   )
 }
@@ -175,7 +198,12 @@ export function useAntdTheme(): CSSProperties {
     '--aikit-radius': `${token.borderRadius}px`,
     '--aikit-radius-sm': `${token.borderRadiusSM}px`,
     '--aikit-font': token.fontFamily,
+    '--aikit-font-mono': token.fontFamilyCode,
     '--aikit-font-size': `${token.fontSize}px`,
+    '--aikit-line': String(token.lineHeight),
+    '--aikit-control-height': `${token.controlHeight}px`,
+    '--aikit-shadow': token.boxShadowTertiary,
+    '--aikit-shadow-pop': token.boxShadowSecondary,
     '--aikit-danger': token.colorError,
     '--aikit-danger-soft': token.colorErrorBg,
     '--aikit-success': token.colorSuccess,

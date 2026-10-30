@@ -2,10 +2,14 @@
 
 namespace BitApps\AiKit\Ai;
 
+use BitApps\AiKit\Ai\Attachments\AttachmentStore;
+use BitApps\AiKit\Ai\Engine\AttachmentEngine;
 use BitApps\AiKit\Ai\Engine\CoreAiClientEngine;
 use BitApps\AiKit\Ai\Engine\EngineInterface;
+use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\Providers\ClaudeProvider;
 use BitApps\AiKit\Ai\Providers\GeminiProvider;
+use BitApps\AiKit\Ai\Providers\OpenAiCompatibleProvider;
 use BitApps\AiKit\Ai\Providers\OpenAiProvider;
 use BitApps\AiKit\PluginContext;
 use BitApps\AiKit\Security\RateLimiter;
@@ -24,6 +28,12 @@ final class Assistant
 {
     public const MAX_MESSAGE_CHARS = 4000;
 
+    /** Longest a turn holds the user's lock if PHP never got to release it. */
+    private const TURN_LOCK_SECONDS = 900;
+
+    /** @var null|callable(array<string, mixed>): void */
+    private $progress;
+
     /** @var null|callable(): ?EngineInterface test seam */
     private $engineFactory;
 
@@ -34,7 +44,8 @@ final class Assistant
         private ToolRegistry $registry,
         private ConversationStore $store,
         private RateLimiter $limiter,
-        ?callable $engineFactory = null
+        ?callable $engineFactory = null,
+        private ?AttachmentStore $attachments = null
     ) {
         $this->engineFactory = $engineFactory;
     }
@@ -68,6 +79,14 @@ final class Assistant
                 : 'Save an API key for the chosen provider in the AI engine section of the assistant settings.'];
         }
 
+        if (OpenAiCompatibleProvider::KEY === $provider) {
+            if ('' === (string) $settings['base_url'] || '' === (string) $settings['model']) {
+                return ['engine' => null, 'reason' => 'Set the base URL and the model name of the OpenAI-compatible service in the AI engine section of the assistant settings.'];
+            }
+
+            return ['engine' => new OpenAiCompatibleProvider($key, (string) $settings['base_url']), 'reason' => null];
+        }
+
         return match ($provider) {
             OpenAiProvider::KEY => ['engine' => new OpenAiProvider($key), 'reason' => null],
             GeminiProvider::KEY => ['engine' => new GeminiProvider($key), 'reason' => null],
@@ -76,16 +95,33 @@ final class Assistant
     }
 
     /**
+     * Report the next turns' progress (AgentLoop::onProgress()) as they run: for a
+     * streamed reply.
+     *
+     * @param null|callable(array<string, mixed>): void $listener
+     */
+    public function onProgress(?callable $listener): self
+    {
+        $this->progress = $listener;
+
+        return $this;
+    }
+
+    /**
      * Send the user's message and run the loop.
+     *
+     * @param array<string, mixed> $context       stored with a new conversation (e.g. the form it is about)
+     * @param string[]             $attachmentIds files the user uploaded for this message (AttachmentStore)
      *
      * @return array<string, mixed> the chat view, or `error` + `reason`
      */
-    /**
-     * @param array<string, mixed> $context stored with a new conversation (e.g. the form it is about)
-     */
-    public function chat(int $userId, string $message, string $pageContext = '', array $context = []): array
+    public function chat(int $userId, string $message, string $pageContext = '', array $context = [], array $attachmentIds = []): array
     {
         $message = trim($message);
+        $attachmentIds = array_values(array_unique(array_filter(array_map('strval', $attachmentIds))));
+        if ('' === $message && [] !== $attachmentIds) {
+            $message = 'Please look at the attached file' . (\count($attachmentIds) > 1 ? 's' : '') . '.';
+        }
         if ('' === $message) {
             return $this->failure($userId, 'Type a message first.', 'empty_message');
         }
@@ -93,53 +129,13 @@ final class Assistant
             return $this->failure($userId, 'That message is too long (' . self::MAX_MESSAGE_CHARS . ' characters at most).', 'message_too_long');
         }
 
-        $conversation = $this->store->load($userId);
-        if (null !== $conversation['pending']) {
-            return $this->failure($userId, 'Confirm or cancel the waiting action first.', 'pending_confirmation');
-        }
-
-        $ready = $this->ready($userId);
-        if (isset($ready['error'])) {
-            return $ready;
-        }
-
-        $limited = $this->overDailyLimit($userId);
-        if (null !== $limited) {
-            return $limited;
-        }
-
-        $messages = $conversation['messages'];
-        $messages[] = ['role' => 'user', 'content' => $message, 'at' => time()];
-
-        return $this->execute($userId, $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->run($messages, $system, $call), $context);
+        return $this->exclusive($userId, fn () => $this->send($userId, $message, $pageContext, $context, $attachmentIds));
     }
 
     /** Approve or cancel the action the assistant is waiting on. */
     public function decide(int $userId, bool $approve, string $pageContext = ''): array
     {
-        $conversation = $this->store->load($userId);
-        $pending = $conversation['pending'];
-        if (null === $pending) {
-            return $this->failure($userId, 'Nothing is waiting for confirmation.', 'no_pending');
-        }
-
-        $ready = $this->ready($userId);
-        if (isset($ready['error'])) {
-            return $ready;
-        }
-
-        // A decision runs more model calls on the site's key, so it counts like a message.
-        $limited = $this->overDailyLimit($userId);
-        if (null !== $limited) {
-            return $limited;
-        }
-
-        $messages = $conversation['messages'];
-        // Taken off the conversation before it runs: a second approval sent at the same
-        // time, or after a failed turn, finds nothing to run instead of running it twice.
-        $this->store->save($userId, $messages, null);
-
-        return $this->execute($userId, $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->resume($messages, $pending, $approve, $system, $call));
+        return $this->exclusive($userId, fn () => $this->settle($userId, $approve, $pageContext));
     }
 
     /** Start a new conversation; the current one stays in the history. */
@@ -200,7 +196,9 @@ final class Assistant
     {
         if ('all' === $conversationId) {
             $this->store->deleteAll($userId);
+            $this->attachments?->deleteAllOfUser($userId);
         } else {
+            $this->forgetAttachmentsOf($userId, $conversationId);
             $this->store->delete($userId, $conversationId);
         }
 
@@ -222,7 +220,9 @@ final class Assistant
         foreach ($conversation['messages'] as $entry) {
             if ('tool' === ($entry['role'] ?? '')) {
                 foreach ((array) ($entry['results'] ?? []) as $result) {
-                    $results[(string) $result['id']] = !empty($result['is_error']);
+                    // Chats saved before `skipped` existed carry only the "Not run:" text.
+                    $skipped = !empty($result['skipped']) || str_starts_with((string) ($result['content'] ?? ''), 'Not run:');
+                    $results[(string) $result['id']] = $skipped ? 'skipped' : (!empty($result['is_error']) ? 'error' : 'ok');
                 }
             }
         }
@@ -230,7 +230,12 @@ final class Assistant
         foreach ($conversation['messages'] as $entry) {
             $role = (string) ($entry['role'] ?? '');
             if ('user' === $role) {
-                $items[] = ['role' => 'user', 'text' => (string) $entry['content']];
+                $items[] = ['role' => 'user', 'text' => (string) $entry['content']] + (empty($entry['attachments']) ? [] : ['attachments' => array_map(
+                    fn ($file) => ['id' => (string) ($file['id'] ?? ''), 'name' => (string) ($file['name'] ?? ''), 'kind' => (string) ($file['kind'] ?? ''), 'size' => (int) ($file['size'] ?? 0)]
+                        // Deleted after its time on the site: the AI no longer gets it either.
+                        + (null === $this->attachments?->get($userId, (string) ($file['id'] ?? '')) ? ['expired' => true] : []),
+                    (array) $entry['attachments']
+                )]);
             } elseif ('assistant' === $role) {
                 $tools = [];
                 foreach ((array) ($entry['tool_calls'] ?? []) as $toolCall) {
@@ -238,8 +243,8 @@ final class Assistant
                     $tools[] = [
                         'name'  => (string) $toolCall['name'],
                         'title' => $definition?->title() ?? (string) $toolCall['name'],
-                        'error' => $results[(string) $toolCall['id']] ?? false,
-                    ];
+                        'error' => 'error' === ($results[(string) $toolCall['id']] ?? ''),
+                    ] + ('skipped' === ($results[(string) $toolCall['id']] ?? '') ? ['skipped' => true] : []);
                 }
                 if ('' !== trim((string) $entry['text']) || [] !== $tools) {
                     $items[] = ['role' => 'assistant', 'text' => (string) $entry['text'], 'tools' => $tools];
@@ -265,6 +270,75 @@ final class Assistant
             'pinned'   => !empty($conversation['context']['pinned']),
             'archived' => !empty($conversation['context']['archived']),
         ]];
+    }
+
+    /**
+     * chat() while the user's turn lock is held.
+     *
+     * @param array<string, mixed> $context
+     * @param string[]             $attachmentIds
+     *
+     * @return array<string, mixed>
+     */
+    private function send(int $userId, string $message, string $pageContext, array $context, array $attachmentIds): array
+    {
+        $conversation = $this->store->load($userId);
+        if (null !== $conversation['pending']) {
+            return $this->failure($userId, 'Confirm or cancel the waiting action first.', 'pending_confirmation');
+        }
+
+        $ready = $this->ready($userId);
+        if (isset($ready['error'])) {
+            return $ready;
+        }
+
+        // Checked before the daily budget counts the turn.
+        $attached = $this->attachedFiles($userId, $attachmentIds, $ready['engine']);
+        if (isset($attached['error'])) {
+            return $this->failure($userId, (string) $attached['error'], (string) $attached['reason']);
+        }
+
+        $limited = $this->overDailyLimit($userId);
+        if (null !== $limited) {
+            return $limited;
+        }
+
+        $messages = $conversation['messages'];
+        $messages[] = ['role' => 'user', 'content' => $message, 'at' => time()] + ([] === $attached ? [] : ['attachments' => $attached]);
+
+        return $this->execute($userId, $conversation['id'], $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->run($messages, $system, $call), $context);
+    }
+
+    /**
+     * decide() while the user's turn lock is held.
+     *
+     * @return array<string, mixed>
+     */
+    private function settle(int $userId, bool $approve, string $pageContext): array
+    {
+        $conversation = $this->store->load($userId);
+        $pending = $conversation['pending'];
+        if (null === $pending) {
+            return $this->failure($userId, 'Nothing is waiting for confirmation.', 'no_pending');
+        }
+
+        $ready = $this->ready($userId);
+        if (isset($ready['error'])) {
+            return $ready;
+        }
+
+        // A decision runs more model calls on the site's key, so it counts like a message.
+        $limited = $this->overDailyLimit($userId);
+        if (null !== $limited) {
+            return $limited;
+        }
+
+        $messages = $conversation['messages'];
+        // Taken off the conversation before it runs: a second approval sent at the same
+        // time, or after a failed turn, finds nothing to run instead of running it twice.
+        $this->store->saveTo($userId, $conversation['id'], $messages, null);
+
+        return $this->execute($userId, $conversation['id'], $ready['engine'], $messages, $pageContext, static fn (AgentLoop $loop, string $system, ToolContext $call) => $loop->resume($messages, $pending, $approve, $system, $call));
     }
 
     /**
@@ -294,22 +368,34 @@ final class Assistant
      * @param callable(AgentLoop, string, ToolContext): array<string, mixed> $step
      * @param array<string, mixed>                                           $context
      */
-    private function execute(int $userId, EngineInterface $engine, array $messages, string $pageContext, callable $step, array $context = []): array
+    private function execute(int $userId, ?string $conversationId, EngineInterface $engine, array $messages, string $pageContext, callable $step, array $context = []): array
     {
         $settings = $this->settings->read();
+        if (null !== $this->attachments) {
+            // Attached files go to the engine with the transcript, but are never stored in it.
+            $engine = new AttachmentEngine($engine, $this->attachments, $userId);
+        }
         $call = new ToolContext(ToolContext::CHANNEL_ASSISTANT, $userId, null, 'Assistant · ' . $engine->label(), null, false, (bool) $settings['allow_personal_data']);
-        $loop = new AgentLoop($engine, $this->runner, (int) $settings['max_turns'], 4096, CoreAiClientEngine::KEY === $engine->key() ? '' : $this->settings->model($engine->key()));
+        $loop = (new AgentLoop($engine, $this->runner, (int) $settings['max_turns'], 4096, CoreAiClientEngine::KEY === $engine->key() ? '' : $this->settings->model($engine->key())))->onProgress($this->progress);
 
         try {
             $outcome = $step($loop, $this->systemPrompt($userId, $pageContext), $call);
         } catch (AiException $error) {
-            // Nothing is saved: the user can send the same message again.
+            // Tools that already ran changed the site: keep them, so the chat shows what
+            // happened and the next message is not sent without their results. With
+            // nothing run, nothing is saved: the user can send the same message again.
+            $completed = $loop->completed();
+            if ([] !== $completed) {
+                $this->store->saveTo($userId, $conversationId, array_merge($messages, $completed), null, $context);
+            }
+
             return $this->failure($userId, $error->getMessage(), $error->reason());
         }
 
         // A paused turn's assistant message is in `messages`; its results wait in `pending`.
+        // Saved to the conversation the turn began in, even if the user opened another meanwhile.
         $transcript = array_merge($messages, $outcome['messages']);
-        $this->store->save($userId, $transcript, $outcome['pending'], $context);
+        $this->store->saveTo($userId, $conversationId, $transcript, $outcome['pending'], $context);
 
         return $this->view($userId) + ['usage' => $outcome['usage'], 'stop_reason' => $outcome['stop_reason']];
     }
@@ -326,7 +412,7 @@ final class Assistant
             . "- Look things up with the tools; never invent IDs, numbers, field names or settings.\n"
             . "- Do only what the user asked. Before a change, say briefly what you will do. Actions that cannot be undone are confirmed by the user in the chat; the tool result tells you when you are waiting.\n"
             . "- Personal data in tool results may be masked (for example j***@example.com). Do not try to recover it.\n"
-            . "- Keep answers short and concrete: short paragraphs or lists, with the form or entry IDs you used.\n"
+            . "- Keep answers short and concrete: short paragraphs or lists, naming the IDs of the records you used.\n"
             . '- ' . UntrustedContent::GUIDANCE . "\n\n"
             . 'Today is ' . gmdate('l, j F Y') . ' (UTC).';
 
@@ -338,6 +424,100 @@ final class Assistant
         }
 
         return $prompt;
+    }
+
+    /**
+     * The user's files for this message as the transcript keeps them (no content),
+     * or `error` + `reason` when one is missing, too many, too large together, or a
+     * kind the engine cannot read.
+     *
+     * @param string[] $ids
+     *
+     * @return array<int, array<string, mixed>>|array{error: string, reason: string}
+     */
+    private function attachedFiles(int $userId, array $ids, EngineInterface $engine): array
+    {
+        if ([] === $ids) {
+            return [];
+        }
+        if (null === $this->attachments) {
+            return ['error' => 'Attachments are not available here.', 'reason' => 'attachments_off'];
+        }
+
+        $limits = $this->attachments->limits();
+        if (\count($ids) > (int) $limits['max_files']) {
+            return ['error' => 'Attach at most ' . (int) $limits['max_files'] . ' files to one message.', 'reason' => 'attachment_count'];
+        }
+
+        $readable = $engine instanceof SupportsAttachments ? $engine->attachmentKinds() : [];
+        $maxTotal = (int) $limits['max_total_bytes'];
+        $engineMax = $engine instanceof SupportsAttachments ? $engine->maxAttachmentBytes() : 0;
+        if ($engineMax > 0) {
+            $maxTotal = min($maxTotal, $engineMax);
+        }
+
+        $files = [];
+        $total = 0;
+        foreach ($ids as $id) {
+            $meta = $this->attachments->get($userId, $id);
+            if (null === $meta) {
+                return ['error' => 'An attached file is no longer available. Attach it again.', 'reason' => 'attachment_missing'];
+            }
+            $kind = (string) $meta['kind'];
+            if (\in_array($kind, [AttachmentStore::KIND_IMAGE, AttachmentStore::KIND_PDF], true) && !\in_array($kind, $readable, true)) {
+                return ['error' => 'The AI engine in use cannot read ' . (AttachmentStore::KIND_PDF === $kind ? 'PDF files' : 'images') . '. Attach text instead, or switch the engine in the assistant settings.', 'reason' => 'attachment_unsupported'];
+            }
+            $total += (int) $meta['size'];
+            $files[] = AttachmentStore::publicMeta($meta);
+        }
+        if ($maxTotal > 0 && $total > $maxTotal) {
+            return ['error' => 'The attached files are too large together for one message.', 'reason' => 'attachment_too_large'];
+        }
+
+        return $files;
+    }
+
+    /** Delete the files a conversation's messages refer to. */
+    private function forgetAttachmentsOf(int $userId, string $conversationId): void
+    {
+        if (null === $this->attachments) {
+            return;
+        }
+        $conversation = $this->store->repository()->find($userId, $conversationId);
+        foreach ((array) ($conversation['messages'] ?? []) as $entry) {
+            foreach ((array) ($entry['attachments'] ?? []) as $file) {
+                $this->attachments->delete($userId, (string) ($file['id'] ?? ''));
+            }
+        }
+    }
+
+    /**
+     * Run one turn of the user's at a time. Two tabs sending at once would both
+     * build on the same transcript and the later save would drop the other's turn;
+     * the second one is turned away instead. The lock also goes if PHP stops
+     * mid-turn (a fatal error, a time limit), and it expires on its own.
+     *
+     * @param callable(): array<string, mixed> $turn
+     *
+     * @return array<string, mixed>
+     */
+    private function exclusive(int $userId, callable $turn): array
+    {
+        $key = $this->context->optionName('ai_turn_' . $userId);
+        if (false !== get_transient($key)) {
+            return $this->failure($userId, 'The assistant is still answering your previous message. Wait for it to finish, then send this one.', 'turn_running');
+        }
+        set_transient($key, time(), self::TURN_LOCK_SECONDS);
+        $release = static function () use ($key) {
+            delete_transient($key);
+        };
+        register_shutdown_function($release);
+
+        try {
+            return $turn();
+        } finally {
+            $release();
+        }
     }
 
     /** @return null|array<string, mixed> the failure when today's budget is used up */

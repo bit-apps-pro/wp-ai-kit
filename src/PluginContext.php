@@ -57,6 +57,21 @@ final class PluginContext
     /** Listing the tools on the WordPress MCP Adapter plugin's default server. */
     public const FEATURE_MCP_ADAPTER = 'mcp_adapter';
 
+    /**
+     * Files attached to assistant messages (images, PDFs, Word and text files),
+     * kept a day in a private uploads folder. Off unless the plugin opts in: it
+     * accepts uploads, so the plugin decides.
+     */
+    public const FEATURE_ATTACHMENTS = 'attachments';
+
+    /**
+     * Streamed replies (`POST <ns>/ai/assistant/stream`, server-sent events): the
+     * text shows while the model writes and each tool as it runs. Off unless the
+     * plugin opts in: a proxy that buffers responses holds the stream back, and the
+     * UI then waits for the whole reply as without it.
+     */
+    public const FEATURE_STREAM = 'stream';
+
     /** Conversations in user meta, the activity log in an option (bounded). */
     public const STORAGE_OPTIONS = 'options';
 
@@ -74,6 +89,8 @@ final class PluginContext
         self::FEATURE_API_KEYS    => true,
         self::FEATURE_ABILITIES   => true,
         self::FEATURE_MCP_ADAPTER => true,
+        self::FEATURE_ATTACHMENTS => false,
+        self::FEATURE_STREAM      => false,
     ];
 
     /**
