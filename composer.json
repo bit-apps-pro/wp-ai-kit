@@ -42,7 +42,8 @@
     "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
     "friendsofphp/php-cs-fixer": "^3.10",
     "phpcompatibility/phpcompatibility-wp": "*",
-    "phpunit/phpunit": "^9.6",
+    "phpstan/phpstan": "^2.3 !=2.3.4",
+        "phpunit/phpunit": "^9.6",
     "rector/rector": "^2.5",
     "yoast/phpunit-polyfills": "^2.0"
   },
