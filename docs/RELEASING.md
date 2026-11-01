@@ -56,7 +56,11 @@ git push origin vX.Y.Z
   - **One-time setup:** create the npm organisation `bitapps`, then add an automation
     token as the repository secret `NPM_TOKEN`. Provenance needs the workflow's
     `id-token: write` permission, which it has.
-- **GitHub release.** Create one from the tag and paste the changelog section.
+- **GitHub release.** `release.yml` creates it from the tag with the changelog section
+  (unless one exists) and attaches `bitapps-wp-ai-kit-ui-X.Y.Z.tgz`. Until the npm
+  organisation exists, consumers install that file's URL:
+  `https://github.com/bit-apps-pro/wp-ai-kit/releases/download/vX.Y.Z/bitapps-wp-ai-kit-ui-X.Y.Z.tgz`.
+  Without the `NPM_TOKEN` secret the npm step is skipped with a notice, not failed.
 
 To publish by hand instead (first release, or CI unavailable):
 
