@@ -6,6 +6,8 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-04
+
 ### Added
 - Typed getters on `PluginContext` for the services a plugin may give: `auditLogger()`, `oauthStorage()`,
   `conversationRepository()`, `brand()`, `piiClassifier()`, `assistantPersona()` and `apiKeyPrefix()`. A value of
@@ -287,7 +289,8 @@ First release.
 - `PluginContext::create()` threw an unqualified `InvalidArgumentException` (a fatal) for non-string
   `instructions`.
 
-[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/bit-apps-pro/wp-ai-kit/compare/v1.1.1...v1.1.2
