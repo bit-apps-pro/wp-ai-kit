@@ -404,7 +404,7 @@ final class Assistant
     {
         $user = get_userdata($userId);
         $name = \is_object($user) ? (string) ($user->display_name ?? '') : '';
-        $persona = $this->context->service('assistant_persona');
+        $persona = $this->context->assistantPersona();
 
         $prompt = 'You are the AI assistant inside ' . $this->context->name() . ' on the WordPress site "' . get_bloginfo('name') . '". '
             . 'You help ' . ('' !== $name ? $name : 'the signed-in user') . ' understand and manage it, using the tools provided.' . "\n\n"
@@ -416,7 +416,7 @@ final class Assistant
             . '- ' . UntrustedContent::GUIDANCE . "\n\n"
             . 'Today is ' . gmdate('l, j F Y') . ' (UTC).';
 
-        if (\is_string($persona) && '' !== trim($persona)) {
+        if ('' !== trim($persona)) {
             $prompt .= "\n\n" . trim($persona);
         }
         if ('' !== trim($pageContext)) {

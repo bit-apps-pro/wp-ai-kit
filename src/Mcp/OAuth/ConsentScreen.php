@@ -291,9 +291,9 @@ final class ConsentScreen
      */
     private function palette(): array
     {
-        $brand = $this->context->service('brand');
+        $brand = $this->context->brand();
         $pick = static function (string $key) use ($brand): ?string {
-            $value = \is_array($brand) ? ($brand[$key] ?? null) : null;
+            $value = $brand[$key] ?? null;
 
             return \is_string($value) && preg_match('/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i', $value) ? $value : null;
         };
