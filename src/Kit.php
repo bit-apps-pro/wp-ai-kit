@@ -6,34 +6,29 @@ use BitApps\AiKit\Abilities\AbilitiesBridge;
 use BitApps\AiKit\Ai\Assistant;
 use BitApps\AiKit\Ai\AssistantPrivacy;
 use BitApps\AiKit\Ai\Attachments\AttachmentStore;
-use BitApps\AiKit\Ai\ConversationRepositoryInterface;
 use BitApps\AiKit\Ai\ConversationStore;
-use BitApps\AiKit\Ai\Engine\CoreAiClientEngine;
-use BitApps\AiKit\Ai\Engine\EngineInterface;
-use BitApps\AiKit\Ai\Engine\SupportsAttachments;
 use BitApps\AiKit\Ai\UserMetaConversationRepository;
 use BitApps\AiKit\Audit\AuditLoggerInterface;
 use BitApps\AiKit\Audit\NullAuditLogger;
 use BitApps\AiKit\Audit\OptionsAuditLogger;
 use BitApps\AiKit\Audit\SearchableAuditLog;
+use BitApps\AiKit\Kit\AbilitiesMirror;
+use BitApps\AiKit\Kit\AdminState;
+use BitApps\AiKit\Kit\Hooks;
+use BitApps\AiKit\Kit\Lifecycle;
 use BitApps\AiKit\Mcp\Auth\ApiKeyService;
 use BitApps\AiKit\Mcp\Auth\BearerResolverInterface;
 use BitApps\AiKit\Mcp\OAuth\OAuthEndpoints;
 use BitApps\AiKit\Mcp\OAuth\OAuthServer;
-use BitApps\AiKit\Mcp\OAuth\OAuthStorageInterface;
 use BitApps\AiKit\Mcp\OAuth\OptionsOAuthStorage;
-use BitApps\AiKit\Mcp\OAuth\TokenService;
 use BitApps\AiKit\Mcp\Server\McpServer;
 use BitApps\AiKit\Mcp\Transport\HttpTransport;
-use BitApps\AiKit\Mcp\Transport\WpMcpAdapterBridge;
-use BitApps\AiKit\Rest\RestRoutes;
 use BitApps\AiKit\Security\PiiMasker;
 use BitApps\AiKit\Security\RateLimiter;
 use BitApps\AiKit\Security\SecretRedactor;
 use BitApps\AiKit\Settings\AiSettings;
 use BitApps\AiKit\Settings\FeatureFlags;
 use BitApps\AiKit\Settings\McpSettings;
-use BitApps\AiKit\Settings\RequirementsReport;
 use BitApps\AiKit\Storage\TableAuditLogger;
 use BitApps\AiKit\Storage\TableConversationRepository;
 use BitApps\AiKit\Storage\Tables;
@@ -54,6 +49,10 @@ use BitApps\AiKit\Tools\ToolRunner;
  *
  * Which native WordPress pieces are present is decided by probing (function and
  * class existence), never by version numbers; see Settings\RequirementsReport.
+ *
+ * This class builds and holds the kit's services. Hook callbacks, purges and what
+ * the admin screens read live in Kit\*; their methods stay here as delegates because
+ * they are public within 1.x.
  */
 final class Kit
 {
@@ -111,7 +110,7 @@ final class Kit
 
         $kit = new self($context, new FeatureFlags($context, $defaultFeatures));
         self::$instances[$slug] = $kit;
-        $kit->registerHooks();
+        (new Hooks($kit))->register();
 
         if (\function_exists('do_action')) {
             do_action(Contract::bootedHook($slug), $kit);
@@ -203,9 +202,9 @@ final class Kit
             return new NullAuditLogger();
         }
 
-        $service = $this->context->service('audit');
-        if ($service instanceof AuditLoggerInterface) {
-            return $service;
+        $logger = $this->context->auditLogger();
+        if (null !== $logger) {
+            return $logger;
         }
 
         $options = new OptionsAuditLogger($this->context->optionName('ai_audit_log'));
@@ -241,10 +240,7 @@ final class Kit
     /** Stop the kit's scheduled work. Call it from the plugin's deactivation. */
     public function deactivate(): void
     {
-        if (\function_exists('wp_clear_scheduled_hook')) {
-            wp_clear_scheduled_hook($this->purgeHook());
-            wp_clear_scheduled_hook($this->attachmentsPurgeHook());
-        }
+        (new Lifecycle($this))->deactivate();
     }
 
     /**
@@ -258,56 +254,25 @@ final class Kit
     }
 
     /**
-     * Everything the kit keeps on the current site, removed: its options (settings,
-     * provider keys, API keys, OAuth clients and grants, the option-stored activity
-     * log), each user's chats and open-chat pointer in user meta, attached files,
-     * scheduled work and, with $dropTables, its tables (chat history and activity
-     * log) with their version stamp. Short-lived transients (rate limits, one-time
-     * codes, reply locks) are left to expire.
-     *
-     * Static so a plugin's uninstall can call it without booting the kit: it reads
-     * only the context's prefix and storage. On a network, call it for each site.
-     * A plugin that lets users keep their data passes its own setting as $dropTables.
+     * Everything the kit keeps on the current site, removed, without a booted kit:
+     * see Kit\Lifecycle::removeSiteData(). A plugin that lets users keep their data
+     * passes its own setting as $dropTables.
      */
     public static function removeSiteData(PluginContext $context, bool $dropTables = true): void
     {
-        if (\function_exists('wp_clear_scheduled_hook')) {
-            wp_clear_scheduled_hook($context->optionName('aikit_purge'));
-            wp_clear_scheduled_hook($context->optionName('aikit_attachments_purge'));
-        }
-        if ($dropTables) {
-            (new Tables($context))->uninstall();
-        }
-        (new AttachmentStore($context))->removeAll();
-
-        foreach (self::OWNED_OPTIONS as $option) {
-            delete_option($context->optionName($option));
-        }
-        $metaKey = self::conversationMetaKey($context);
-        delete_metadata('user', 0, $metaKey, '', true);
-        delete_metadata('user', 0, $metaKey . '_active', '', true);
+        Lifecycle::removeSiteData($context, $dropTables);
     }
 
-    /** init: keep the tables current and the daily purge scheduled (storage `tables` only). */
+    /** @internal init */
     public function onStorageInit(): void
     {
-        $this->tables()->maybeInstall();
-        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->purgeHook())) {
-            wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', $this->purgeHook());
-        }
+        (new Lifecycle($this))->onStorageInit();
     }
 
-    /** The daily purge: activity older than its retention, conversations untouched for longer than the history keeps them. */
+    /** @internal the daily purge */
     public function onPurge(): void
     {
-        $logger = $this->auditLogger();
-        if ($logger instanceof TableAuditLogger) {
-            $logger->purgeOlderThan((int) ($this->mcpSettings()->read()['audit_retention_days'] ?? 90));
-        }
-        if (\in_array(Tables::CONVERSATIONS, $this->tables()->wanted(), true)) {
-            $days = max(1, (int) ($this->aiSettings()->read()['history_days'] ?? 30));
-            $this->conversations()->repository()->purgeOlderThan($days * DAY_IN_SECONDS);
-        }
+        (new Lifecycle($this))->onPurge();
     }
 
     /** `{option_prefix}aikit_purge`: the cron hook of the daily purge. */
@@ -453,18 +418,15 @@ final class Kit
             return null;
         }
 
-        if (null === $this->oauth) {
-            $storage = $this->context->service('oauth_storage');
-            $this->oauth = new OAuthServer(
-                $this->context,
-                rest_url($this->context->restNamespace() . HttpTransport::ROUTE),
-                $storage instanceof OAuthStorageInterface ? $storage : new OptionsOAuthStorage($this->context),
-                new RateLimiter($this->context->optionPrefix()),
-                fn () => AccessPolicy::fromSettings($this->features->settings(FeatureFlags::MCP_SERVER))->level(),
-                fn () => [] !== array_filter($this->registry()->all(), static fn ($tool) => $tool->containsPersonalData()),
-                fn () => \count($this->runner()->listTools(new ToolContext(ToolContext::CHANNEL_MCP, (int) get_current_user_id())))
-            );
-        }
+        $this->oauth ??= new OAuthServer(
+            $this->context,
+            rest_url($this->context->restNamespace() . HttpTransport::ROUTE),
+            $this->context->oauthStorage() ?? new OptionsOAuthStorage($this->context),
+            new RateLimiter($this->context->optionPrefix()),
+            fn () => AccessPolicy::fromSettings($this->features->settings(FeatureFlags::MCP_SERVER))->level(),
+            fn () => [] !== array_filter($this->registry()->all(), static fn ($tool) => $tool->containsPersonalData()),
+            fn () => \count($this->runner()->listTools(new ToolContext(ToolContext::CHANNEL_MCP, (int) get_current_user_id())))
+        );
 
         return $this->oauth;
     }
@@ -507,91 +469,26 @@ final class Kit
         return $oauth?->tokens()->revokeAll() ?? 0;
     }
 
-    /**
-     * init (priority 0): answer our own two discovery documents by exact path,
-     * before WordPress routing — other MCP plugins register greedy
-     * `/.well-known/` rewrite rules that would otherwise swallow them.
-     */
+    /** @internal init (priority 0) */
     public function onInit(): void
     {
-        $uri = isset($_SERVER['REQUEST_URI']) && \is_string($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
-        if (!str_contains($uri, '/.well-known/oauth-')) {
-            return;
-        }
-
-        $oauth = $this->oauth();
-        $document = $oauth?->wellKnownDocument((string) parse_url($uri, PHP_URL_PATH));
-        if (null === $document) {
-            return;
-        }
-
-        status_header(200);
-        header('Content-Type: application/json; charset=utf-8');
-        header('Cache-Control: public, max-age=3600');
-        header('Access-Control-Allow-Origin: *');
-        echo wp_json_encode($document);
-
-        exit;
+        (new Hooks($this))->onInit();
     }
 
-    /** admin_post(_nopriv)_<slug>_mcp_authorize: the consent screen. */
+    /** @internal admin_post(_nopriv)_<slug>_mcp_authorize */
     public function onConsent(): void
     {
-        $oauth = $this->oauth();
-        if (null === $oauth) {
-            wp_die('Connecting AI apps is switched off on this site.', '', ['response' => 404]);
-        }
-
-        $method = isset($_SERVER['REQUEST_METHOD']) && \is_string($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
-        // phpcs:ignore WordPress.Security.NonceVerification -- the GET is a cross-site OAuth redirect; the POST is nonce-checked by ConsentScreen.
-        $outcome = $oauth->consentScreen()->respond($method, wp_unslash($_GET), wp_unslash($_POST), (int) get_current_user_id());
-
-        if ('redirect' === $outcome['type']) {
-            // The target is a login URL or a redirect URI already matched against the client's registration.
-            // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
-            wp_redirect($outcome['location']);
-
-            exit;
-        }
-
-        status_header($outcome['status'] ?? 200);
-        foreach ($oauth->consentScreen()::headers() as $name => $value) {
-            header($name . ': ' . $value);
-        }
-        echo $outcome['html']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built escaped by ConsentScreen
-
-        exit;
+        (new Hooks($this))->onConsent();
     }
 
-    /**
-     * rest_api_init: register the MCP route only when the site switched the
-     * server on, so a disabled server has no endpoint at all.
-     */
+    /** @internal rest_api_init */
     public function onRestApiInit(): void
     {
-        $namespace = $this->context->restNamespace();
-
-        // The admin UI's routes: controllers are built when a request reaches one.
-        if ($this->context->provides(PluginContext::FEATURE_REST_UI)) {
-            RestRoutes::register($namespace, fn () => $this, $this->context);
-        }
-
-        if (!$this->context->provides(PluginContext::FEATURE_MCP) || !$this->features->isEnabled(FeatureFlags::MCP_SERVER)) {
-            return;
-        }
-
-        // Routes only: the server, its tools and the OAuth stores are built when a request reaches them.
-        HttpTransport::registerLazily($namespace, fn () => $this->transport());
-        add_filter('rest_post_dispatch', [$this, 'onRestPostDispatch'], 10, 3);
-
-        if ($this->oauthEnabled()) {
-            OAuthServer::registerLazily($namespace, fn () => $this->oauth());
-        }
+        (new Hooks($this))->onRestApiInit();
     }
 
     /**
-     * rest_post_dispatch: the WWW-Authenticate challenge on the MCP endpoint's
-     * 401s. Every other response passes through without building the transport.
+     * @internal rest_post_dispatch
      *
      * @param mixed $result
      * @param mixed $server
@@ -601,42 +498,31 @@ final class Kit
      */
     public function onRestPostDispatch($result, $server = null, $request = null)
     {
-        if (!$result instanceof \WP_REST_Response || 401 !== $result->get_status() || !$request instanceof \WP_REST_Request
-            || $request->get_route() !== '/' . $this->context->restNamespace() . HttpTransport::ROUTE) {
-            return $result;
-        }
-
-        return $this->transport()->addChallenge($result, $server, $request);
+        return (new Hooks($this))->onRestPostDispatch($result, $server, $request);
     }
 
     /**
-     * deleted_user: a deleted account's API keys stop working at once.
+     * @internal deleted_user
      *
      * @param mixed $userId
      */
     public function onUserDeleted($userId = 0): void
     {
-        $userId = (int) $userId;
-        if ($userId > 0) {
-            $this->apiKeys()->revokeAllForUser($userId);
-            // Straight through the storage: OAuth may be off now and switched on again later.
-            $storage = $this->context->service('oauth_storage');
-            (new TokenService($storage instanceof OAuthStorageInterface ? $storage : new OptionsOAuthStorage($this->context), $this->context->optionName('')))->revokeAllForUser($userId);
-        }
+        (new Hooks($this))->onUserDeleted($userId);
     }
 
     /**
-     * delete_user: the account's assistant chats and attached files.
+     * @internal delete_user
      *
      * @param mixed $userId
      */
     public function onUserDeleting($userId = 0): void
     {
-        $this->privacy()->forget((int) $userId);
+        (new Hooks($this))->onUserDeleting($userId);
     }
 
     /**
-     * wp_privacy_personal_data_exporters: the assistant's chats in Tools → Export Personal Data.
+     * @internal wp_privacy_personal_data_exporters
      *
      * @param mixed $exporters
      *
@@ -644,19 +530,11 @@ final class Kit
      */
     public function onPrivacyExporters($exporters)
     {
-        if (!\is_array($exporters)) {
-            return $exporters;
-        }
-        $exporters[$this->context->slug() . '-ai-chats'] = [
-            'exporter_friendly_name' => sprintf('%s AI assistant chats', $this->context->name()),
-            'callback'               => fn ($email, $page = 1) => $this->privacy()->export((string) $email, (int) $page),
-        ];
-
-        return $exporters;
+        return (new Hooks($this))->onPrivacyExporters($exporters);
     }
 
     /**
-     * wp_privacy_personal_data_erasers: the assistant's chats and files in Tools → Erase Personal Data.
+     * @internal wp_privacy_personal_data_erasers
      *
      * @param mixed $erasers
      *
@@ -664,15 +542,7 @@ final class Kit
      */
     public function onPrivacyErasers($erasers)
     {
-        if (!\is_array($erasers)) {
-            return $erasers;
-        }
-        $erasers[$this->context->slug() . '-ai-chats'] = [
-            'eraser_friendly_name' => sprintf('%s AI assistant chats', $this->context->name()),
-            'callback'             => fn ($email) => $this->privacy()->erase((string) $email),
-        ];
-
-        return $erasers;
+        return (new Hooks($this))->onPrivacyErasers($erasers);
     }
 
     public function privacy(): AssistantPrivacy
@@ -715,44 +585,7 @@ final class Kit
      */
     public function adminState(): array
     {
-        $settings = $this->mcpSettings()->read();
-        $policy = AccessPolicy::fromSettings($settings);
-
-        $tools = [];
-        foreach ($this->registry()->all() as $tool) {
-            $tools[] = [
-                'name'        => $tool->name(),
-                'title'       => $tool->title(),
-                'description' => $tool->description(),
-                'access'      => $tool->accessLevel(),
-                'tier'        => $tool->tier(),
-                'personal'    => $tool->containsPersonalData(),
-                'enabled'     => $policy->allows($tool),
-            ];
-        }
-
-        return [
-            'settings'   => $settings,
-            'forced_off' => [
-                'mcp' => $this->features->isForcedOff(FeatureFlags::MCP_SERVER),
-                'ai'  => $this->features->isForcedOff(FeatureFlags::ASSISTANT),
-            ],
-            'endpoint'     => rest_url($this->context->restNamespace() . HttpTransport::ROUTE),
-            'tools'        => $tools,
-            'requirements' => RequirementsReport::checks(),
-            'recent'       => $this->recentOutsideCalls(20),
-            'api_keys'     => [
-                'enabled'    => $this->features->isEnabled(FeatureFlags::API_KEYS),
-                'forced_off' => $this->features->isForcedOff(FeatureFlags::API_KEYS),
-                'keys'       => $this->apiKeys()->list(),
-            ],
-            'oauth' => [
-                'forced_off'        => $this->features->isForcedOff(FeatureFlags::OAUTH),
-                'enabled'           => $this->oauthEnabled(),
-                'pretty_permalinks' => OAuthEndpoints::prettyPermalinks(),
-                'connections'       => $this->oauthConnections(),
-            ],
-        ];
+        return (new AdminState($this))->adminState();
     }
 
     /** The plugin's AI assistant settings and provider keys. */
@@ -796,11 +629,11 @@ final class Kit
     public function conversations(): ConversationStore
     {
         $metaKey = self::conversationMetaKey($this->context);
-        $repository = $this->context->service('conversations');
+        $repository = $this->context->conversationRepository();
         $days = (int) ($this->aiSettings()->read()['history_days'] ?? 30);
         $maxAge = max(1, $days) * DAY_IN_SECONDS;
 
-        if ($repository instanceof ConversationRepositoryInterface) {
+        if (null !== $repository) {
             return new ConversationStore($repository, $metaKey . '_active', null, $maxAge);
         }
         if (\in_array(Tables::CONVERSATIONS, $this->tables()->wanted(), true)) {
@@ -835,18 +668,16 @@ final class Kit
         return $this->attachmentStore ??= new AttachmentStore($this->context);
     }
 
-    /** init: keep the hourly removal of expired attachments scheduled. */
+    /** @internal init */
     public function onAttachmentsInit(): void
     {
-        if (\function_exists('wp_next_scheduled') && !wp_next_scheduled($this->attachmentsPurgeHook())) {
-            wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', $this->attachmentsPurgeHook());
-        }
+        (new Lifecycle($this))->onAttachmentsInit();
     }
 
-    /** The hourly purge of attachments older than their time to live. */
+    /** @internal the hourly purge */
     public function onPurgeAttachments(): void
     {
-        $this->attachments()?->purgeExpired();
+        (new Lifecycle($this))->onPurgeAttachments();
     }
 
     /** `{option_prefix}aikit_attachments_purge`: the cron hook of the attachment purge. */
@@ -876,65 +707,7 @@ final class Kit
      */
     public function uiBootstrap(): array
     {
-        $userId = (int) get_current_user_id();
-        $canUse = $userId > 0 && $this->context->canUse($userId);
-        $assistantShipped = $this->context->provides(PluginContext::FEATURE_ASSISTANT) && !$this->features->isForcedOff(FeatureFlags::ASSISTANT);
-        $assistantOn = $assistantShipped && $this->features->isEnabled(FeatureFlags::ASSISTANT);
-
-        $engine = null;
-        $reason = null;
-        $engineObject = null;
-        if ($assistantOn && $canUse) {
-            $resolved = $this->assistant()->resolveEngine();
-            $engineObject = $resolved['engine'];
-            $engine = null !== $engineObject ? ['key' => $engineObject->key(), 'label' => $engineObject->label()] : null;
-            $reason = $resolved['reason'];
-        }
-        $attachments = $this->attachments();
-        $canUpload = $canUse && \function_exists('current_user_can') && current_user_can('upload_files');
-
-        $brand = $this->context->service('brand');
-        $icons = $this->context->icons();
-        $bootstrap = [
-            'contract' => Contract::CONTRACT_VERSION,
-            'slug'     => $this->context->slug(),
-            'name'     => $this->context->name(),
-            'brand'    => [
-                'name'  => $this->context->name(),
-                'color' => \is_array($brand) && \is_string($brand['color'] ?? null) ? $brand['color'] : null,
-                'icon'  => $icons[0]['src'] ?? null,
-            ],
-            'restBase'  => $this->context->provides(PluginContext::FEATURE_REST_UI) ? rest_url($this->context->restNamespace() . Contract::REST_BASE) : null,
-            'nonce'     => wp_create_nonce('wp_rest'),
-            'canUse'    => $canUse,
-            'canManage' => $canUse && $this->context->canManage($userId),
-            'canUpload' => $canUpload,
-            'features'  => [
-                'assistant'   => $assistantShipped,
-                'mcp'         => $this->context->provides(PluginContext::FEATURE_MCP) && !$this->features->isForcedOff(FeatureFlags::MCP_SERVER),
-                'restUi'      => $this->context->provides(PluginContext::FEATURE_REST_UI),
-                'history'     => $this->context->provides(PluginContext::FEATURE_HISTORY),
-                'audit'       => $this->context->provides(PluginContext::FEATURE_AUDIT),
-                'oauth'       => $this->context->provides(PluginContext::FEATURE_OAUTH),
-                'apiKeys'     => $this->context->provides(PluginContext::FEATURE_API_KEYS),
-                'abilities'   => $this->context->provides(PluginContext::FEATURE_ABILITIES),
-                'mcpAdapter'  => $this->context->provides(PluginContext::FEATURE_MCP_ADAPTER),
-                'attachments' => null !== $attachments,
-                'stream'      => $this->context->provides(PluginContext::FEATURE_STREAM),
-            ],
-            'assistantOn'  => $assistantOn,
-            'mcpOn'        => $this->context->provides(PluginContext::FEATURE_MCP) && $this->features->isEnabled(FeatureFlags::MCP_SERVER),
-            'engine'       => $engine,
-            'engineReason' => $reason,
-            'attachments'  => null !== $attachments && $canUpload ? self::attachmentRules($attachments, $engineObject) : null,
-            'user'         => ['id' => $userId, 'locale' => \function_exists('get_user_locale') ? (string) get_user_locale() : 'en_US'],
-            'settingsUrl'  => $this->context->url('settings'),
-            'docsUrl'      => $this->context->url('docs'),
-        ];
-
-        $filtered = apply_filters(Contract::uiBootstrapHook($this->context->slug()), $bootstrap);
-
-        return \is_array($filtered) ? $filtered : $bootstrap;
+        return (new AdminState($this))->uiBootstrap();
     }
 
     /**
@@ -946,33 +719,7 @@ final class Kit
      */
     public function assistantState(): array
     {
-        $view = $this->aiSettings()->publicView();
-        $policy = AccessPolicy::fromSettings($view['settings']);
-        $resolved = $this->assistant()->resolveEngine();
-
-        $tools = [];
-        foreach ($this->registry()->all() as $tool) {
-            $tools[] = [
-                'name'        => $tool->name(),
-                'title'       => $tool->title(),
-                'description' => $tool->description(),
-                'access'      => $tool->accessLevel(),
-                'tier'        => $tool->tier(),
-                'personal'    => $tool->containsPersonalData(),
-                'enabled'     => $policy->allows($tool),
-            ];
-        }
-
-        return $view + [
-            'forced_off'       => $this->features->isForcedOff(FeatureFlags::ASSISTANT),
-            'wordpress_ai'     => CoreAiClientEngine::available(),
-            'wordpress_ai_api' => \function_exists('wp_ai_client_prompt'),
-            'engine'           => null !== $resolved['engine'] ? ['key' => $resolved['engine']->key(), 'label' => $resolved['engine']->label()] : null,
-            'engine_reason'    => $resolved['reason'],
-            // Saved keys are encrypted with the auth salt; one kept in the database is weaker.
-            'salts_in_config' => \defined('AUTH_KEY') && \defined('AUTH_SALT') && '' !== (string) AUTH_KEY && 'put your unique phrase here' !== AUTH_KEY,
-            'tools'           => $tools,
-        ];
+        return (new AdminState($this))->assistantState();
     }
 
     /** The Abilities API mirror of this plugin's tools. */
@@ -989,202 +736,38 @@ final class Kit
         return $this->abilities;
     }
 
-    /**
-     * Mirror tools into the Abilities API (and the MCP Adapter) only while the
-     * MCP server is on, and only when something will use them: the "offer as
-     * WordPress abilities" setting, or the MCP Adapter plugin. Mirroring needs
-     * every tool definition, and WordPress builds the abilities registry on REST
-     * requests, so mirroring nobody reads would load the plugin's tools on each.
-     */
+    /** Whether the tools are mirrored into the Abilities API: see Kit\AbilitiesMirror. */
     public function mirrorsAbilities(): bool
     {
-        // Only with the MCP server on: the assistant alone must not open another way in.
-        if (!AbilitiesBridge::available()
-            || !$this->features->isEnabled(FeatureFlags::ABILITIES_BRIDGE)
-            || !$this->features->isEnabled(FeatureFlags::MCP_SERVER)) {
-            return false;
-        }
-
-        return !empty($this->mcpSettings()->read()['abilities_in_rest'])
-            || ($this->features->isEnabled(FeatureFlags::ADAPTER_BRIDGE) && WpMcpAdapterBridge::available());
+        return (new AbilitiesMirror($this))->mirrorsAbilities();
     }
 
-    /** wp_abilities_api_categories_init */
+    /** @internal wp_abilities_api_categories_init */
     public function onAbilityCategoriesInit(): void
     {
-        if ($this->mirrorsAbilities()) {
-            $this->abilities()->registerCategory();
-        }
+        (new AbilitiesMirror($this))->onAbilityCategoriesInit();
     }
 
-    /** wp_abilities_api_init */
+    /** @internal wp_abilities_api_init */
     public function onAbilitiesInit(): void
     {
-        if ($this->mirrorsAbilities()) {
-            $this->abilities()->registerAbilities();
-        }
+        (new AbilitiesMirror($this))->onAbilitiesInit();
     }
 
     /**
-     * mcp_adapter_init.
+     * @internal mcp_adapter_init
      *
      * @param mixed $adapter
      */
     public function onMcpAdapterInit($adapter = null): void
     {
-        if (!$this->mirrorsAbilities() || !$this->features->isEnabled(FeatureFlags::ADAPTER_BRIDGE)) {
-            return;
-        }
-
-        (new WpMcpAdapterBridge($this->context, $this->abilities()))->createServer($adapter);
-    }
-
-    /**
-     * The last calls from outside the assistant (MCP, Abilities API, WP-CLI) for
-     * the MCP screen's summary; the assistant shows its own on its settings page.
-     * Read from a wider window so a busy assistant does not empty the list.
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function recentOutsideCalls(int $limit): array
-    {
-        $rows = array_filter(
-            $this->auditLogger()->recent($limit * 10),
-            static fn ($row) => ToolContext::CHANNEL_ASSISTANT !== ($row['channel'] ?? '')
-        );
-
-        return \array_slice(array_values($rows), 0, $limit);
-    }
-
-    /**
-     * What the composer checks before uploading: the file types, how many and how
-     * large, and which kinds the current engine reads (text always).
-     *
-     * @return array<string, mixed>
-     */
-    private static function attachmentRules(AttachmentStore $store, ?EngineInterface $engine): array
-    {
-        $limits = $store->limits();
-        $kinds = [AttachmentStore::KIND_TEXT, AttachmentStore::KIND_DOCX];
-        $maxTotal = (int) $limits['max_total_bytes'];
-        if ($engine instanceof SupportsAttachments) {
-            $kinds = array_merge($kinds, $engine->attachmentKinds());
-            if ($engine->maxAttachmentBytes() > 0) {
-                $maxTotal = min($maxTotal, $engine->maxAttachmentBytes());
-            }
-        }
-        $accept = [];
-        foreach (AttachmentStore::TYPES as $ext => $type) {
-            if (\in_array($type['kind'], $kinds, true)) {
-                $accept[] = '.' . $ext;
-            }
-        }
-
-        return [
-            'accept'        => implode(',', $accept),
-            'kinds'         => array_values(array_unique($kinds)),
-            'maxFiles'      => (int) $limits['max_files'],
-            'maxTotalBytes' => $maxTotal,
-            'maxBytes'      => (array) $limits['max_bytes'],
-            'ttlHours'      => (int) round((int) $limits['ttl'] / HOUR_IN_SECONDS),
-        ];
+        (new AbilitiesMirror($this))->onMcpAdapterInit($adapter);
     }
 
     private function piiMasker(): ?PiiMasker
     {
-        $classifier = $this->context->service('pii_classifier');
+        $classifier = $this->context->piiClassifier();
 
-        return \is_callable($classifier) ? new PiiMasker($classifier) : null;
-    }
-
-    /**
-     * Only hook registrations here: nothing is read from the database and
-     * nothing is instantiated until a hook fires.
-     *
-     * Core fires the Abilities init actions lazily, on the first registry access.
-     * When this kit boots after that already happened, it registers at once —
-     * without ever calling the registry's get_instance(), which would re-fire the
-     * action from inside a hook.
-     */
-    /**
-     * Hooks only: nothing below loads a class or reads an option until its hook
-     * fires. A plugin that does not ship MCP (PluginContext `features`) gets none
-     * of the MCP hooks; the assistant needs none of its own (the plugin calls it).
-     */
-    private function registerHooks(): void
-    {
-        if (null !== $this->attachments()) {
-            add_action('init', [$this, 'onAttachmentsInit'], 1, 0);
-            add_action($this->attachmentsPurgeHook(), [$this, 'onPurgeAttachments'], 10, 0);
-        }
-        if ([] !== $this->tables()->wanted()) {
-            add_action('init', [$this, 'onStorageInit'], 1, 0);
-            add_action($this->purgeHook(), [$this, 'onPurge'], 10, 0);
-        }
-        if ($this->context->provides(PluginContext::FEATURE_REST_UI) || $this->context->provides(PluginContext::FEATURE_MCP)) {
-            add_action('rest_api_init', [$this, 'onRestApiInit'], 20, 0);
-        }
-        if ($this->context->provides(PluginContext::FEATURE_ASSISTANT)) {
-            // Before WordPress removes the account: its chats and files go with it.
-            add_action('delete_user', [$this, 'onUserDeleting'], 10, 1);
-            add_filter('wp_privacy_personal_data_exporters', [$this, 'onPrivacyExporters'], 10, 1);
-            add_filter('wp_privacy_personal_data_erasers', [$this, 'onPrivacyErasers'], 10, 1);
-        }
-        if (!$this->context->provides(PluginContext::FEATURE_MCP)) {
-            return;
-        }
-
-        add_action('deleted_user', [$this, 'onUserDeleted'], 10, 1);
-        add_action('wp_abilities_api_categories_init', [$this, 'onAbilityCategoriesInit'], 10, 0);
-        add_action('wp_abilities_api_init', [$this, 'onAbilitiesInit'], 10, 0);
-        add_action('mcp_adapter_init', [$this, 'onMcpAdapterInit'], 10, 1);
-        add_action('init', [$this, 'onInit'], 0, 0);
-        $consent = Contract::consentAction($this->context->slug());
-        add_action('admin_post_' . $consent, [$this, 'onConsent'], 10, 0);
-        add_action('admin_post_nopriv_' . $consent, [$this, 'onConsent'], 10, 0);
-
-        if (did_action('wp_abilities_api_categories_init')) {
-            $this->registerLateCategory();
-        }
-        if (did_action('wp_abilities_api_init')) {
-            $this->registerLateAbilities();
-        }
-    }
-
-    private function registerLateCategory(): void
-    {
-        if (!$this->mirrorsAbilities() || !class_exists(\WP_Ability_Categories_Registry::class)) {
-            return;
-        }
-
-        $slug = Contract::abilityCategory($this->context->slug());
-        if (\function_exists('wp_has_ability_category') && wp_has_ability_category($slug)) {
-            return;
-        }
-
-        $registry = \WP_Ability_Categories_Registry::get_instance();
-        if (null !== $registry) {
-            $registry->register($slug, ['label' => $this->context->name(), 'description' => 'Tools provided by ' . $this->context->name() . '.']);
-        }
-    }
-
-    private function registerLateAbilities(): void
-    {
-        if (!$this->mirrorsAbilities() || !class_exists(\WP_Abilities_Registry::class)) {
-            return;
-        }
-
-        $registry = \WP_Abilities_Registry::get_instance();
-        if (null === $registry) {
-            return;
-        }
-
-        foreach ($this->registry()->all() as $tool) {
-            $name = $tool->abilityName($this->context->slug());
-            if ($tool->isDestructive() || (\function_exists('wp_has_ability') && wp_has_ability($name))) {
-                continue;
-            }
-            $registry->register($name, $this->abilities()->abilityArgs($tool));
-        }
+        return null !== $classifier ? new PiiMasker($classifier) : null;
     }
 }

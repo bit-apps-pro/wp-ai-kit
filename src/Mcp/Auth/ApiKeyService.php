@@ -2,7 +2,6 @@
 
 namespace BitApps\AiKit\Mcp\Auth;
 
-use BitApps\AiKit\Contract;
 use BitApps\AiKit\PluginContext;
 use BitApps\AiKit\Tools\Scopes;
 
@@ -25,8 +24,7 @@ final class ApiKeyService implements BearerResolverInterface
     public function __construct(private PluginContext $context)
     {
         $this->option = $context->optionName('mcp_api_keys');
-        $prefix = $context->service('api_key_prefix');
-        $this->keyPrefix = \is_string($prefix) && '' !== $prefix ? $prefix : str_replace('-', '', Contract::token($context->slug())) . '_key_';
+        $this->keyPrefix = $context->apiKeyPrefix();
     }
 
     /**

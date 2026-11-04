@@ -2,6 +2,10 @@
 
 namespace BitApps\AiKit;
 
+use BitApps\AiKit\Ai\ConversationRepositoryInterface;
+use BitApps\AiKit\Audit\AuditLoggerInterface;
+use BitApps\AiKit\Mcp\OAuth\OAuthStorageInterface;
+
 /**
  * Everything about the consuming plugin the kit must not guess.
  *
@@ -404,6 +408,67 @@ final class PluginContext
         }
 
         return $service;
+    }
+
+    /** The plugin's own audit logger (`audit` service), or null to use the kit's. */
+    public function auditLogger(): ?AuditLoggerInterface
+    {
+        $service = $this->service('audit');
+
+        return $service instanceof AuditLoggerInterface ? $service : null;
+    }
+
+    /** The plugin's own OAuth storage (`oauth_storage` service), or null to use the kit's. */
+    public function oauthStorage(): ?OAuthStorageInterface
+    {
+        $service = $this->service('oauth_storage');
+
+        return $service instanceof OAuthStorageInterface ? $service : null;
+    }
+
+    /** The plugin's own conversation storage (`conversations` service), or null to use the kit's. */
+    public function conversationRepository(): ?ConversationRepositoryInterface
+    {
+        $service = $this->service('conversations');
+
+        return $service instanceof ConversationRepositoryInterface ? $service : null;
+    }
+
+    /**
+     * The `brand` service: `color`, `color_dark`, `background`, `background_dark`.
+     * Empty when not given; each reader checks the values it uses.
+     *
+     * @return array<string, mixed>
+     */
+    public function brand(): array
+    {
+        $service = $this->service('brand');
+
+        return \is_array($service) ? $service : [];
+    }
+
+    /** The `pii_classifier` service, or null when the plugin has none, so nothing is masked. */
+    public function piiClassifier(): ?callable
+    {
+        $service = $this->service('pii_classifier');
+
+        return \is_callable($service) ? $service : null;
+    }
+
+    /** What the plugin adds to the assistant's system prompt (`assistant_persona` service); empty when not given. */
+    public function assistantPersona(): string
+    {
+        $service = $this->service('assistant_persona');
+
+        return \is_string($service) ? $service : '';
+    }
+
+    /** What the plugin's API keys start with: the `api_key_prefix` service, else one built from the slug. */
+    public function apiKeyPrefix(): string
+    {
+        $service = $this->service('api_key_prefix');
+
+        return \is_string($service) && '' !== $service ? $service : str_replace('-', '', Contract::token($this->slug)) . '_key_';
     }
 
     /** Whether the plugin ships a feature (any FEATURE_* constant). */

@@ -126,6 +126,25 @@ final class KitTest extends TestCase
         self::assertTrue(has_action('rest_api_init'), 'MCP hooks stay');
     }
 
+    /** Public within 1.x: a plugin may remove a callback by this name, so WordPress must hold Kit's. */
+    public function testHookCallbacksStayKitsOwnMethods(): void
+    {
+        $kit = Kit::boot($this->context(['storage' => PluginContext::STORAGE_TABLES, 'features' => [PluginContext::FEATURE_ATTACHMENTS => true]]));
+
+        $held = [];
+        foreach (\AiKitTestState::$hooks as $hook => $registered) {
+            foreach ($registered as $entry) {
+                self::assertSame($kit, $entry['callback'][0], $hook);
+                $held[] = $entry['callback'][1];
+            }
+        }
+
+        self::assertContains('onInit', $held);
+        self::assertContains('onStorageInit', $held);
+        self::assertContains('onPurgeAttachments', $held);
+        self::assertContains('onUserDeleting', $held);
+    }
+
     public function testMcpRoutesRegisterWithoutBuildingTheServer(): void
     {
         $kit = Kit::boot($this->context());

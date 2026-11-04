@@ -2,6 +2,7 @@
 
 namespace BitApps\AiKit\Tests;
 
+use BitApps\AiKit\Audit\NullAuditLogger;
 use BitApps\AiKit\PluginContext;
 
 /**
@@ -75,6 +76,47 @@ final class PluginContextTest extends TestCase
             ['src' => 'data:image/png;base64,iVBORw0KGgo='],
         ], $ctx->icons());
         self::assertSame('https://example.test/', $this->context(['website_url' => 'https://example.test/'])->websiteUrl());
+    }
+
+    /** A service of the wrong type reads as not given, so the kit's default takes over. */
+    public function testTypedServiceGettersIgnoreAWrongType(): void
+    {
+        $ctx = $this->context(['services' => [
+            'audit'             => new \stdClass(),
+            'oauth_storage'     => 'nope',
+            'conversations'     => static fn () => new \stdClass(),
+            'brand'             => '#123456',
+            'pii_classifier'    => 'not a function',
+            'assistant_persona' => ['not', 'text'],
+            'api_key_prefix'    => '',
+        ]]);
+
+        self::assertNull($ctx->auditLogger());
+        self::assertNull($ctx->oauthStorage());
+        self::assertNull($ctx->conversationRepository());
+        self::assertSame([], $ctx->brand());
+        self::assertNull($ctx->piiClassifier());
+        self::assertSame('', $ctx->assistantPersona());
+        self::assertSame('bitdemo_key_', $ctx->apiKeyPrefix());
+    }
+
+    public function testTypedServiceGettersReturnWhatThePluginGave(): void
+    {
+        $audit = new NullAuditLogger();
+        $classifier = static fn () => 'personal';
+        $ctx = $this->context(['services' => [
+            'audit'             => static fn () => $audit,
+            'brand'             => ['color' => '#123456'],
+            'pii_classifier'    => $classifier,
+            'assistant_persona' => 'Be brief.',
+            'api_key_prefix'    => 'demo_',
+        ]]);
+
+        self::assertSame($audit, $ctx->auditLogger(), 'a factory is resolved');
+        self::assertSame(['color' => '#123456'], $ctx->brand());
+        self::assertSame($classifier, $ctx->piiClassifier());
+        self::assertSame('Be brief.', $ctx->assistantPersona());
+        self::assertSame('demo_', $ctx->apiKeyPrefix());
     }
 
     public function testDescriptionMustBeAString(): void
