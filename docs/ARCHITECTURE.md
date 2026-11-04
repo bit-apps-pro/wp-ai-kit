@@ -40,7 +40,11 @@ Kit (PHP, src/)                      UI package (frontend/)
 
 - **`Kit`** (`src/Kit.php`) is the one object a plugin holds. `Kit::boot()` registers
   WordPress hooks only; every heavier object (registry, MCP server, OAuth server,
-  assistant, REST controllers) is built when a request needs it.
+  assistant, REST controllers) is built when a request needs it. `Kit` builds and holds
+  those services. `src/Kit/` holds the rest: `Hooks` (what is registered and its
+  callbacks), `Lifecycle` (scheduled work, purges, removing site data), `AbilitiesMirror`
+  (when tools are mirrored) and `AdminState` (what the screens read). These are
+  `@internal`: `Kit` keeps every public method as a delegate.
 - **`PluginContext`** carries everything plugin-specific. Kit code never reads a
   plugin's config, options or capabilities directly. Several plugins can each run
   their own prefixed copy of the kit on one site without sharing state.

@@ -6,6 +6,18 @@ All notable changes to this package. The format follows
 
 ## [Unreleased]
 
+### Added
+- Typed getters on `PluginContext` for the services a plugin may give: `auditLogger()`, `oauthStorage()`,
+  `conversationRepository()`, `brand()`, `piiClassifier()`, `assistantPersona()` and `apiKeyPrefix()`. A value of
+  the wrong type reads as not given. `service()` stays.
+
+### Changed
+- `Kit` is split: hook callbacks and their registration moved to `Kit\Hooks`, scheduled work and site data removal
+  to `Kit\Lifecycle`, the Abilities API and MCP Adapter mirror to `Kit\AbilitiesMirror`, and what the admin screens
+  read to `Kit\AdminState`. These classes are `@internal`. Every public `Kit` method and constant stays, with the
+  same signature and behaviour. WordPress still holds `[$kit, 'onInit']` and the like, so removing a callback by
+  that name keeps working; the `on*` methods are now marked `@internal`.
+
 ## [1.3.0] - 2026-10-28
 
 ### Added
